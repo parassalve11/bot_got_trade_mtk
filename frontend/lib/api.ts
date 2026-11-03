@@ -17,6 +17,7 @@ const MESSAGES: Record<string, string> = {
   invalid_mt5_credentials: "Wrong MT5 login, password or server.",
   too_many_attempts_try_again_later: "Too many failed attempts. Try again in 15 minutes.",
   not_found: "Not found. Check the dashboard configuration.",
+  dashboard_not_configured: "The dashboard is not configured. Open /api/diagnostics for details.",
 };
 
 export function explain(detail: unknown): string {
