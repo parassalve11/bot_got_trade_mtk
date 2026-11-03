@@ -1,0 +1,447 @@
+//@version=6
+//@strategy_alert_message {"context":{{strategy.order.alert_message}},"fill_price":{{strategy.order.price}},"action":"{{strategy.order.action}}","contracts":{{strategy.order.contracts}},"position":"{{strategy.market_position}}","position_size":{{strategy.market_position_size}},"previous_position":"{{strategy.prev_market_position}}","sent_at":"{{timenow}}"}
+strategy("BYTEFX UT Multi-Asset v1.2", shorttitle = "BYTEFX UT", overlay = true, pyramiding = 0,
+     initial_capital = 10000, currency = currency.USD,
+     default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.percent, commission_value = 0.05,
+     slippage = 2, margin_long = 100, margin_short = 100,
+     calc_on_every_tick = false, calc_on_order_fills = false,
+     process_orders_on_close = false, fill_orders_on_standard_ohlc = true,
+     max_labels_count = 500)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BYTEFX UT Multi-Asset v1.2
+// v1.2 changes (logic):
+//   • Dashboard status no longer hard-codes "CLOSE ONLY"; it shows the real opposite-signal mode.
+//   • Daily reset is safe on D/W/M charts (timeframe.change("1D") is not called there).
+//   • Floating-point guards on quantity flooring and stop/target tick rounding.
+//   • signal_time_ms is emitted as null instead of NaN (invalid JSON) when unknown.
+//   • Win rate uses float division; signal time falls back to bar open if time_close is na.
+//   • HTF request moved to global scope (no dynamic request needed).
+// Webhook payload schema is UNCHANGED ("version":"1.1.0") so the MT5 executor keeps working.
+// UT-style ATR stop engine; no original source was supplied for parity testing.
+// Standard time-based candles only. HA is an optional signal source, not a fill price.
+// ─────────────────────────────────────────────────────────────────────────────
+
+string G_UT = "01 | UT signal engine"
+float sensitivity = input.float(6.4, "Sensitivity", minval = 0.1, step = 0.1, group = G_UT)
+int atrLength = input.int(2, "UT ATR period", minval = 1, group = G_UT)
+bool useHA = input.bool(false, "Use Heikin Ashi signal close", group = G_UT)
+string direction = input.string("Long + Short", "Trade direction", options = ["Long + Short", "Long only", "Short only"], group = G_UT)
+string oppositeMode = input.string("Close only", "Opposite UT signal", options = ["Close + reverse", "Close only", "Ignore"], group = G_UT)
+
+string G_RISK = "02 | Position sizing"
+float riskPercent = input.float(0.5, "Equity risk per trade (%)", minval = 0.01, maxval = 10, step = 0.1, group = G_RISK)
+float exposurePercent = input.float(95, "Maximum notional / equity (%)", minval = 1, maxval = 100, group = G_RISK, tooltip = "Unleveraged cap. Quantity may use less than the selected risk. Allows a small margin buffer at the default 95%.")
+float stepOverride = input.float(0, "Quantity step override (0 = symbol minimum)", minval = 0, group = G_RISK, tooltip = "TradingView contracts/units, NOT broker lots. Positive overrides must be a multiple of the symbol minimum.")
+int cooldownBars = input.int(0, "Minimum full bars between entry signals", minval = 0, group = G_RISK)
+int maxDailyEntries = input.int(0, "Maximum entries per exchange day (0 = off)", minval = 0, group = G_RISK)
+float dailyLossPercent = input.float(0, "Daily equity loss pause (%) (0 = off)", minval = 0, maxval = 50, group = G_RISK, tooltip = "Checked at candle close against previous day's last equity. Closes the position and pauses until the next exchange day. On D/W/M charts every bar counts as a new period. Not a guaranteed loss cap.")
+
+string G_EXIT = "03 | Stop loss and take profit"
+string stopMode = input.string("ATR", "Initial stop method", options = ["ATR", "UT distance", "Fixed %", "Price distance"], group = G_EXIT)
+int riskAtrLength = input.int(14, "Risk ATR period", minval = 1, group = G_EXIT)
+float stopAtr = input.float(2, "Stop ATR multiplier", minval = 0.1, step = 0.1, group = G_EXIT)
+float stopPercent = input.float(1, "Stop distance (%)", minval = 0.01, group = G_EXIT)
+float stopPrice = input.float(10, "Stop price distance", minval = 0.00000001, group = G_EXIT)
+string targetMode = input.string("Risk : Reward", "Take-profit method", options = ["Risk : Reward", "ATR", "Fixed %", "Off"], group = G_EXIT)
+float rewardRatio = input.float(1.5, "Reward / risk", minval = 0.1, step = 0.1, group = G_EXIT)
+float targetAtr = input.float(3, "Target ATR multiplier", minval = 0.1, step = 0.1, group = G_EXIT)
+float targetPercent = input.float(1.5, "Target distance (%)", minval = 0.01, group = G_EXIT)
+bool trailUT = input.bool(false, "Tighten stop with UT line at candle close", group = G_EXIT)
+
+string G_FILTER = "04 | Optional entry filters (test individually)"
+bool useHtf = input.bool(false, "Require higher-timeframe UT agreement", group = G_FILTER)
+string htf = input.timeframe("240", "Higher timeframe", group = G_FILTER, tooltip = "Must exceed chart timeframe when enabled. Uses the previous completed HTF candle, with regular close and the same UT settings.")
+float minBodyAtr = input.float(0, "Minimum directional candle body / risk ATR (0 = off)", minval = 0, step = 0.1, group = G_FILTER)
+float minAtrPercent = input.float(0, "Minimum risk ATR / price (%) (0 = off)", minval = 0, group = G_FILTER)
+float maxAtrPercent = input.float(0, "Maximum risk ATR / price (%) (0 = off)", minval = 0, group = G_FILTER)
+
+string G_TIME = "05 | Session and testing window"
+bool useSession = input.bool(false, "Restrict new entries to session", group = G_TIME)
+string sessionHours = input.session("0800-1700", "Entry session", group = G_TIME)
+string sessionDays = input.string("1234567", "Session days (1=Sun, 2=Mon, ... 7=Sat)", group = G_TIME)
+string sessionZone = input.string("Etc/UTC", "Session timezone (IANA)", group = G_TIME, tooltip = "For example Etc/UTC, Asia/Kolkata, America/New_York. Chart display timezone does not change this setting.")
+bool useDates = input.bool(false, "Use backtest date window", group = G_TIME)
+int startDate = input.time(timestamp("01 Jan 2020 00:00 +0000"), "Start (inclusive)", group = G_TIME)
+int endDate = input.time(timestamp("01 Jan 2030 00:00 +0000"), "End (exclusive)", group = G_TIME)
+
+string G_VIEW = "06 | Display"
+bool showPanel = input.bool(true, "Show dashboard", group = G_VIEW)
+string panelPos = input.string("Top right", "Dashboard position", options = ["Top right", "Top left", "Middle right", "Bottom right", "Bottom left"], group = G_VIEW)
+string panelSize = input.string("Small", "Dashboard text size", options = ["Tiny", "Small", "Normal"], group = G_VIEW)
+string theme = input.string("Dark", "Dashboard theme", options = ["Dark", "Light"], group = G_VIEW)
+bool showCloud = input.bool(true, "Trend cloud (price vs UT line)", group = G_VIEW)
+bool showZones = input.bool(true, "Shade active SL / TP zones", group = G_VIEW)
+bool showLabels = input.bool(true, "Bold entry / exit labels", group = G_VIEW)
+bool colorBars = input.bool(false, "Color candles by UT bias", group = G_VIEW)
+bool showRaw = input.bool(false, "Show raw UT crosses", group = G_VIEW)
+
+string G_ALERT = "07 | Alerts and execution"
+string instanceTag = input.string("main", "Alert instance tag", group = G_ALERT, tooltip = "Use a distinct tag for each live alert/settings combination. Never put credentials here.")
+bool brokerExecution = input.bool(false, "MT5 execution contract (broker owns fixed SL/TP)", group = G_ALERT, tooltip = "Enable only for the BYTEFX webhook executor. UT trailing must be OFF. Python sizes broker lots from actual MT5 equity; TradingView quantity is for simulation only.")
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+bool isDark = theme == "Dark"
+color C_BULL = color.rgb(38, 194, 129)
+color C_BEAR = color.rgb(239, 83, 80)
+color C_WARN = color.rgb(255, 167, 38)
+color C_BG = isDark ? color.rgb(14, 18, 25) : color.rgb(255, 255, 255)
+color C_HEAD = isDark ? color.rgb(41, 98, 255) : color.rgb(30, 64, 175)
+color C_SECTION = isDark ? color.rgb(27, 33, 44) : color.rgb(236, 240, 246)
+color C_BORDER = isDark ? color.rgb(40, 47, 60) : color.rgb(214, 220, 229)
+color C_LABEL = isDark ? color.rgb(140, 150, 168) : color.rgb(88, 100, 120)
+color C_TEXT = isDark ? color.rgb(236, 240, 246) : color.rgb(17, 24, 39)
+color C_ACCENT = isDark ? color.rgb(104, 152, 255) : color.rgb(30, 64, 175)
+color C_NEUTRAL = isDark ? color.rgb(150, 158, 175) : color.rgb(110, 120, 140)
+
+string TS = switch panelSize
+    "Tiny" => size.tiny
+    "Normal" => size.normal
+    => size.small
+string TS_TITLE = switch panelSize
+    "Tiny" => size.small
+    "Normal" => size.large
+    => size.normal
+string TABLE_POS = switch panelPos
+    "Top left" => position.top_left
+    "Middle right" => position.middle_right
+    "Bottom right" => position.bottom_right
+    "Bottom left" => position.bottom_left
+    => position.top_right
+
+// ── Core functions ───────────────────────────────────────────────────────────
+f_ut(float src, float atrValue) =>
+    float loss = sensitivity * atrValue
+    var float stop = na
+    float previous = nz(stop[1], 0)
+    if src > previous and src[1] > previous
+        stop := math.max(previous, src - loss)
+    else if src < previous and src[1] < previous
+        stop := math.min(previous, src + loss)
+    else
+        stop := src > previous ? src - loss : src + loss
+    stop
+
+f_confirmedHtf() =>
+    float line = f_ut(close, ta.atr(atrLength))
+    [close[1], line[1]]
+
+f_num(float value) =>
+    na(value) ? "null" : str.tostring(value, "#.################")
+
+f_int(int value) =>
+    na(value) ? "null" : str.tostring(value)
+
+f_quantity(float equity, float unitRisk, float unitNotional, float step) =>
+    float riskQty = unitRisk > 0 ? equity * riskPercent / 100 / unitRisk : na
+    float capQty = unitNotional > 0 ? equity * exposurePercent / 100 / unitNotional : na
+    float rawQty = math.min(riskQty, capQty)
+    // Small epsilon stops 0.3 / 0.1 = 2.9999… from flooring one step too low.
+    na(rawQty) ? na : math.floor(rawQty / step + 1e-9) * step
+
+f_tighten(float currentStop, float candidateStop, bool isLong) =>
+    isLong ? math.max(currentStop, candidateStop) : math.min(currentStop, candidateStop)
+
+f_quote(string value) =>
+    string escaped = str.replace_all(value, "\\", "\\\\")
+    escaped := str.replace_all(escaped, "\"", "\\\"")
+    escaped := str.replace_all(escaped, "\n", "\\n")
+    escaped := str.replace_all(escaped, "\r", "\\r")
+    escaped := str.replace_all(escaped, "\t", "\\t")
+    "\"" + escaped + "\""
+
+f_payload(string tradeId, string eventName, string side, int signalTime, float refPrice, float slTicks, float tpTicks, float slPrice, float tpPrice, string previousTradeId = "") =>
+    "{\"source\":\"tradingview\",\"strategy\":\"bytefx_ut_multi_asset\",\"version\":\"1.1.0\",\"instance\":" + f_quote(instanceTag) + ",\"event_id\":" + f_quote(tradeId + ":" + eventName) + ",\"trade_id\":" + f_quote(tradeId) + ",\"event\":" + f_quote(eventName) + ",\"side\":" + f_quote(side) + ",\"symbol\":" + f_quote(syminfo.tickerid) + ",\"timeframe\":" + f_quote(timeframe.period) + ",\"signal_time_ms\":" + f_int(signalTime) + ",\"reference_price\":" + f_num(refPrice) + ",\"stop_ticks\":" + f_num(slTicks) + ",\"target_ticks\":" + f_num(tpTicks) + ",\"tick_size\":" + f_num(syminfo.mintick) + ",\"stop_loss\":" + f_num(slPrice) + ",\"take_profit\":" + f_num(tpPrice) + ",\"risk_percent\":" + f_num(riskPercent) + ",\"previous_trade_id\":" + (previousTradeId == "" ? "null" : f_quote(previousTradeId)) + ",\"exit_owner\":" + f_quote(brokerExecution ? "broker_fixed" : "pine_simulation") + "}"
+
+// ── Display helpers ──────────────────────────────────────────────────────────
+f_row(table t, int row, string label, string value, color ink) =>
+    table.cell(t, 0, row, " " + label + " ", text_color = C_LABEL, bgcolor = C_BG, text_size = TS, text_halign = text.align_left, text_formatting = text.format_bold)
+    table.cell(t, 1, row, " " + value + " ", text_color = ink, bgcolor = C_BG, text_size = TS, text_halign = text.align_right, text_formatting = text.format_bold, text_font_family = font.family_monospace)
+
+f_banner(table t, int row, string txt, color bg, color ink, string textSize, string halign) =>
+    table.cell(t, 0, row, " " + txt + " ", text_color = ink, bgcolor = bg, text_size = textSize, text_halign = halign, text_formatting = text.format_bold)
+    table.cell(t, 1, row, "", bgcolor = bg)
+    table.merge_cells(t, 0, row, 1, row)
+
+f_signed(float value, string fmt) =>
+    na(value) ? "—" : (value >= 0 ? "+" : "") + str.tostring(value, fmt)
+
+f_tfLabel(string tf) =>
+    int secs = timeframe.in_seconds(tf)
+    secs < 60 ? str.tostring(secs) + "s" : secs < 3600 ? str.tostring(secs / 60) + "m" : secs < 86400 ? str.tostring(secs / 3600) + "H" : tf
+
+// ── Validation ───────────────────────────────────────────────────────────────
+if barstate.isfirst
+    if brokerExecution and trailUT
+        runtime.error("MT5 execution uses broker-owned fixed SL/TP. Disable UT trailing; this contract does not send stop updates.")
+    if not chart.is_standard
+        runtime.error("Use a standard Candles chart. Enable the HA signal source in Inputs if desired.")
+    if not (timeframe.isseconds or timeframe.isminutes or timeframe.isdwm)
+        runtime.error("Use a time-based interval, not a tick or price-based interval.")
+    if useHtf and timeframe.in_seconds(htf) <= timeframe.in_seconds()
+        runtime.error("Higher timeframe must exceed the chart timeframe.")
+    if useDates and startDate >= endDate
+        runtime.error("Backtest end must be later than start.")
+    if maxAtrPercent > 0 and minAtrPercent > maxAtrPercent
+        runtime.error("Minimum ATR % must not exceed maximum ATR %.")
+    if syminfo.mintick <= 0 or syminfo.pointvalue <= 0 or na(syminfo.mincontract) or syminfo.mincontract <= 0
+        runtime.error("Symbol needs valid tick size, point value and minimum contract metadata.")
+    if stepOverride > 0 and (stepOverride < syminfo.mincontract or math.abs(stepOverride / syminfo.mincontract - math.round(stepOverride / syminfo.mincontract)) > 0.000001)
+        runtime.error("Quantity step must be a multiple of the symbol minimum contract.")
+
+// ── Signal engine ────────────────────────────────────────────────────────────
+float haClose = request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close, gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+float src = useHA ? haClose : close
+float utAtr = ta.atr(atrLength)
+float riskAtr = ta.atr(riskAtrLength)
+float utStop = f_ut(src, utAtr)
+// Offset + lookahead_on deliberately returns only COMPLETED higher-timeframe data.
+string htfRequest = useHtf ? htf : timeframe.period
+[htfCloseRaw, htfStopRaw] = request.security(syminfo.tickerid, htfRequest, f_confirmedHtf(), gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+float htfClose = useHtf ? htfCloseRaw : na
+float htfStop = useHtf ? htfStopRaw : na
+bool crossUp = ta.crossover(src, utStop)
+bool crossDown = ta.crossunder(src, utStop)
+bool rawBuy = barstate.isconfirmed and crossUp
+bool rawSell = barstate.isconfirmed and crossDown
+bool ready = not na(utStop[1]) and not na(riskAtr) and riskAtr > 0 and close > 0
+int sessionOpen = time(timeframe.period, sessionHours + ":" + sessionDays, sessionZone)
+int sessionClose = time_close(timeframe.period, sessionHours + ":" + sessionDays, sessionZone)
+bool sessionOk = not useSession or (not na(sessionOpen) and not na(sessionClose) and time >= sessionOpen and time_close <= sessionClose)
+// Date and session gates govern signal creation, not guaranteed next-tick fill time.
+bool datesOk = not useDates or (time >= startDate and time_close < endDate)
+bool dateExpired = useDates and time_close >= endDate
+float atrPercent = riskAtr / close * 100
+bool volatilityOk = (minAtrPercent == 0 or atrPercent >= minAtrPercent) and (maxAtrPercent == 0 or atrPercent <= maxAtrPercent)
+bool buyQuality = volatilityOk and (minBodyAtr == 0 or close - open >= minBodyAtr * riskAtr) and (not useHtf or htfClose > htfStop)
+bool sellQuality = volatilityOk and (minBodyAtr == 0 or open - close >= minBodyAtr * riskAtr) and (not useHtf or htfClose < htfStop)
+
+// ── Daily controls ───────────────────────────────────────────────────────────
+// timeframe.change("1D") is only evaluated on intraday charts; D/W/M bars are each a new period.
+bool newDay = timeframe.isdwm or timeframe.change("1D")
+float prevEquity = nz(strategy.equity[1], strategy.equity)
+var float dayStartEquity = na
+var bool dayPaused = false
+var int dailyEntries = 0
+var int lastEntryBar = na
+if barstate.isfirst or newDay
+    dayStartEquity := prevEquity
+    dayPaused := false
+    dailyEntries := 0
+if dailyLossPercent > 0 and strategy.equity <= dayStartEquity * (1 - dailyLossPercent / 100)
+    dayPaused := true
+bool cooldownOk = na(lastEntryBar) or bar_index - lastEntryBar > cooldownBars
+bool dailyCountOk = maxDailyEntries == 0 or dailyEntries < maxDailyEntries
+bool canEnter = barstate.isconfirmed and ready and sessionOk and datesOk and not dayPaused and cooldownOk and dailyCountOk and strategy.equity > 0
+
+// ── Trade state ──────────────────────────────────────────────────────────────
+var float activeLossTicks = na
+var float activeProfitTicks = na
+var float activeStop = na
+var float activeTarget = na
+var float entryReference = na
+var string tradeId = ""
+var int signalTime = na
+var string tradeSide = ""
+// Keep submitted and filled trade state separate: a gap can cause a margin rejection.
+var float pendingLossTicks = na
+var float pendingProfitTicks = na
+var float pendingReference = na
+var int pendingTime = na
+var string pendingId = ""
+var string pendingSide = ""
+var int pendingBar = na
+var string lastDecision = "Waiting for UT cross"
+bool enteredLong = false
+bool enteredShort = false
+bool havePosition = strategy.position_size != 0
+
+if not na(pendingBar) and bar_index > pendingBar
+    bool pendingFilled = havePosition and strategy.opentrades.entry_time(0) >= pendingTime and (strategy.position_size > 0 ? pendingSide == "LONG" : pendingSide == "SHORT")
+    if pendingFilled
+        activeLossTicks := pendingLossTicks
+        activeProfitTicks := pendingProfitTicks
+        entryReference := pendingReference
+        signalTime := pendingTime
+        tradeId := pendingId
+        tradeSide := pendingSide
+        activeStop := na
+        activeTarget := na
+    pendingBar := na
+
+// Maintain protection before considering new orders. Stops never loosen.
+if havePosition and not na(activeLossTicks)
+    bool isLong = strategy.position_size > 0
+    float sign = isLong ? 1.0 : -1.0
+    float initialStop = strategy.position_avg_price - sign * activeLossTicks * syminfo.mintick
+    activeStop := na(activeStop) ? initialStop : f_tighten(activeStop, initialStop, isLong)
+    activeTarget := na(activeProfitTicks) ? na : strategy.position_avg_price + sign * activeProfitTicks * syminfo.mintick
+    if trailUT and not na(utStop)
+        // Ignore a UT line on the wrong side of market after a reversal.
+        if isLong and utStop < close
+            activeStop := f_tighten(activeStop, math.round_to_mintick(utStop), true)
+        if not isLong and utStop > close
+            activeStop := f_tighten(activeStop, math.round_to_mintick(utStop), false)
+    string stopMessage = f_payload(tradeId, "stop_loss", tradeSide, signalTime, entryReference, activeLossTicks, activeProfitTicks, activeStop, activeTarget)
+    string targetMessage = f_payload(tradeId, "take_profit", tradeSide, signalTime, entryReference, activeLossTicks, activeProfitTicks, activeStop, activeTarget)
+    if isLong
+        strategy.exit("LX", "Long", stop = activeStop, limit = activeTarget, alert_loss = stopMessage, alert_profit = targetMessage, alert_message = stopMessage)
+    else
+        strategy.exit("SX", "Short", stop = activeStop, limit = activeTarget, alert_loss = stopMessage, alert_profit = targetMessage, alert_message = stopMessage)
+else if not havePosition
+    activeStop := na
+    activeTarget := na
+
+bool forceClose = dayPaused or dateExpired
+bool opposite = (strategy.position_size > 0 and rawSell) or (strategy.position_size < 0 and rawBuy)
+int candidate = rawBuy ? 1 : rawSell ? -1 : 0
+bool allowedDirection = candidate == 1 ? direction != "Short only" : direction != "Long only"
+bool qualityOk = candidate == 1 ? buyQuality : sellQuality
+bool canReplace = not havePosition or (opposite and oppositeMode == "Close + reverse")
+bool wantsEntry = candidate != 0 and canEnter and allowedDirection and qualityOk and canReplace and not forceClose
+bool entrySubmitted = false
+
+if rawBuy or rawSell
+    lastDecision := not ready ? "ATR warming up" : not datesOk ? "Outside dates" : not sessionOk ? "Outside session" : dayPaused ? "Daily loss pause" : not dailyCountOk ? "Daily entry limit" : not cooldownOk ? "Cooldown" : not allowedDirection ? "Direction blocked" : not qualityOk ? "Entry filter blocked" : not canReplace ? "Position already open" : "Checking size"
+
+if wantsEntry
+    float stopDistance = switch stopMode
+        "ATR" => riskAtr * stopAtr
+        "UT distance" => candidate == 1 ? close - utStop : utStop - close
+        "Fixed %" => close * stopPercent / 100
+        => stopPrice
+    float lossTicks = math.max(1, math.ceil(stopDistance / syminfo.mintick - 1e-9))
+    float targetDistance = switch targetMode
+        "Risk : Reward" => lossTicks * syminfo.mintick * rewardRatio
+        "ATR" => riskAtr * targetAtr
+        "Fixed %" => close * targetPercent / 100
+        => na
+    float profitTicks = na(targetDistance) ? na : math.max(1, math.ceil(targetDistance / syminfo.mintick - 1e-9))
+    float unitRisk = strategy.convert_to_account(lossTicks * syminfo.mintick * syminfo.pointvalue)
+    float unitNotional = strategy.convert_to_account(close * syminfo.pointvalue)
+    float quantityStep = stepOverride > 0 ? stepOverride : syminfo.mincontract
+    float qty = f_quantity(strategy.equity, unitRisk, unitNotional, quantityStep)
+    bool validSize = stopDistance > 0 and not na(qty) and qty >= quantityStep and qty > 0
+    if validSize
+        // Old exits remain attached to the old entry until the reversal actually fills.
+        int barSignalTime = na(time_close) ? time : time_close
+        pendingLossTicks := lossTicks
+        pendingProfitTicks := profitTicks
+        pendingReference := close
+        pendingTime := barSignalTime
+        pendingSide := candidate == 1 ? "LONG" : "SHORT"
+        pendingId := "bytefx:1.1:" + instanceTag + ":" + syminfo.tickerid + ":" + timeframe.period + ":" + str.tostring(barSignalTime) + ":" + pendingSide
+        pendingBar := bar_index
+        // Absolute prices are unknown until entry fills; relative ticks are authoritative.
+        string entryMessage = f_payload(pendingId, havePosition ? "reverse" : "entry", pendingSide, pendingTime, pendingReference, lossTicks, profitTicks, na, na, havePosition ? tradeId : "")
+        string slMessage = f_payload(pendingId, "stop_loss", pendingSide, pendingTime, pendingReference, lossTicks, profitTicks, na, na)
+        string tpMessage = f_payload(pendingId, "take_profit", pendingSide, pendingTime, pendingReference, lossTicks, profitTicks, na, na)
+        if candidate == 1
+            strategy.entry("Long", strategy.long, qty = qty, alert_message = entryMessage)
+            strategy.exit("LX", "Long", loss = lossTicks, profit = profitTicks, alert_loss = slMessage, alert_profit = tpMessage, alert_message = slMessage)
+            enteredLong := true
+        else
+            strategy.entry("Short", strategy.short, qty = qty, alert_message = entryMessage)
+            strategy.exit("SX", "Short", loss = lossTicks, profit = profitTicks, alert_loss = slMessage, alert_profit = tpMessage, alert_message = slMessage)
+            enteredShort := true
+        entrySubmitted := true
+        lastEntryBar := bar_index
+        dailyEntries += 1
+        lastDecision := "Submitted " + pendingSide
+        if showLabels
+            bool isBuy = candidate == 1
+            string tip = (havePosition ? "Reversal" : "New entry") + "\nQty: " + str.tostring(qty) + "\nRef price: " + str.tostring(close, format.mintick) + "\nStop: " + str.tostring(lossTicks, "#") + " ticks" + "\nTarget: " + (na(profitTicks) ? "Off" : str.tostring(profitTicks, "#") + " ticks")
+            label.new(bar_index, isBuy ? low : high, isBuy ? "BUY" : "SELL", yloc = isBuy ? yloc.belowbar : yloc.abovebar, style = isBuy ? label.style_label_up : label.style_label_down, color = isBuy ? C_BULL : C_BEAR, textcolor = color.white, size = size.small, text_formatting = text.format_bold, tooltip = tip)
+    else
+        lastDecision := "Skipped: size / stop invalid"
+
+// Opposite signals still close a position when entry-only filters block reversal.
+// Session/direction/filter gates never suppress protective exits.
+if havePosition and not entrySubmitted and (forceClose or (opposite and oppositeMode != "Ignore"))
+    string reason = dayPaused ? "daily_loss" : dateExpired ? "date_end" : "opposite_signal"
+    string closeMessage = f_payload(tradeId, reason, tradeSide, signalTime, entryReference, activeLossTicks, activeProfitTicks, activeStop, activeTarget)
+    // Leave the bracket working until the market close order fills.
+    if strategy.position_size > 0
+        strategy.close("Long", alert_message = closeMessage)
+    else
+        strategy.close("Short", alert_message = closeMessage)
+    lastDecision := "Closing: " + reason
+
+// Bold exit label with realised P/L of the last closed trade.
+if showLabels and strategy.closedtrades > nz(strategy.closedtrades[1])
+    int lastIdx = strategy.closedtrades - 1
+    float tradePl = strategy.closedtrades.profit(lastIdx)
+    float exitPx = strategy.closedtrades.exit_price(lastIdx)
+    string exitTip = "Exit: " + strategy.closedtrades.exit_id(lastIdx) + "\nPrice: " + str.tostring(exitPx, format.mintick) + "\nP/L: " + str.tostring(tradePl, "0.00") + " " + strategy.account_currency
+    label.new(bar_index, exitPx, f_signed(tradePl, "0.00"), style = label.style_label_left, color = color.new(tradePl >= 0 ? C_BULL : C_BEAR, 15), textcolor = color.white, size = size.tiny, text_formatting = text.format_bold, tooltip = exitTip)
+
+// ── Chart visuals ────────────────────────────────────────────────────────────
+bool bull = src > utStop
+bool biasFlip = bull != bull[1]
+color biasColor = bull ? C_BULL : C_BEAR
+pUT = plot(biasFlip ? na : utStop, "UT ATR stop", color = biasColor, linewidth = 2, style = plot.style_linebr)
+pSrc = plot(src, "Signal source", color = na, display = display.data_window, editable = false)
+fill(pSrc, pUT, color = showCloud ? color.new(biasColor, 88) : na, title = "Trend cloud")
+
+bool showBracket = havePosition and not entrySubmitted
+pEntry = plot(showBracket ? strategy.position_avg_price : na, "Filled entry", color = C_NEUTRAL, style = plot.style_linebr, linewidth = 1)
+pSL = plot(showBracket ? activeStop : na, "Active SL", color = C_BEAR, style = plot.style_linebr, linewidth = 2)
+pTP = plot(showBracket ? activeTarget : na, "Active TP", color = C_BULL, style = plot.style_linebr, linewidth = 2)
+fill(pEntry, pSL, color = showZones ? color.new(C_BEAR, 85) : na, title = "Risk zone")
+fill(pEntry, pTP, color = showZones ? color.new(C_BULL, 85) : na, title = "Reward zone")
+
+barcolor(colorBars ? biasColor : na, title = "UT bias candles")
+plotshape(enteredLong and not showLabels, title = "Submitted buy", text = "BUY", style = shape.triangleup, location = location.belowbar, color = C_BULL, textcolor = C_BULL, size = size.tiny)
+plotshape(enteredShort and not showLabels, title = "Submitted sell", text = "SELL", style = shape.triangledown, location = location.abovebar, color = C_BEAR, textcolor = C_BEAR, size = size.tiny)
+plotshape(showRaw and rawBuy, title = "Raw UT buy", style = shape.circle, location = location.belowbar, color = color.new(C_BULL, 50), size = size.tiny)
+plotshape(showRaw and rawSell, title = "Raw UT sell", style = shape.circle, location = location.abovebar, color = color.new(C_BEAR, 50), size = size.tiny)
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+var table panel = table.new(TABLE_POS, 2, 25, bgcolor = C_BG, frame_color = C_BORDER, frame_width = 1, border_color = C_BORDER, border_width = 1)
+var bool panelBuilt = false
+if showPanel and barstate.islast
+    // Static banners and section headers are drawn and merged once.
+    if not panelBuilt
+        f_banner(panel, 0, "BYTEFX  •  UT MULTI-ASSET  v1.2", C_HEAD, color.white, TS_TITLE, text.align_center)
+        f_banner(panel, 1, syminfo.ticker + "  •  " + f_tfLabel(timeframe.period) + "  •  " + (useHA ? "HEIKIN ASHI SIGNALS" : "STANDARD SIGNALS"), C_SECTION, C_TEXT, TS, text.align_center)
+        f_banner(panel, 2, "SIGNAL ENGINE", C_SECTION, C_ACCENT, TS, text.align_left)
+        f_banner(panel, 7, "POSITION", C_SECTION, C_ACCENT, TS, text.align_left)
+        f_banner(panel, 13, "RISK CONTROL", C_SECTION, C_ACCENT, TS, text.align_left)
+        f_banner(panel, 19, "PERFORMANCE", C_SECTION, C_ACCENT, TS, text.align_left)
+        panelBuilt := true
+
+    string status = dayPaused ? "DAILY PAUSE" : not datesOk ? "OUTSIDE DATES" : not sessionOk ? "OUTSIDE SESSION" : not ready ? "WARMING UP" : "ACTIVE"
+    color statusInk = dayPaused ? C_BEAR : status == "ACTIVE" ? C_BULL : C_WARN
+    color decisionInk = str.startswith(lastDecision, "Submitted") ? C_ACCENT : str.startswith(lastDecision, "Closing") or str.startswith(lastDecision, "Skipped") ? C_WARN : C_TEXT
+    string htfText = not useHtf ? "OFF" : na(htfStop) ? "WAITING" : (htfClose > htfStop ? "BULLISH " : "BEARISH ") + f_tfLabel(htf)
+    color htfInk = not useHtf or na(htfStop) ? C_NEUTRAL : htfClose > htfStop ? C_BULL : C_BEAR
+
+    f_row(panel, 3, "Status", status, statusInk)
+    f_row(panel, 4, "Last decision", str.upper(lastDecision), decisionInk)
+    f_row(panel, 5, "UT bias  |  ATR", (bull ? "BULLISH" : "BEARISH") + "  |  " + str.tostring(utAtr, format.mintick), biasColor)
+    f_row(panel, 6, "HTF filter", htfText, htfInk)
+
+    float posSize = math.abs(strategy.position_size)
+    string sideText = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    color sideInk = strategy.position_size > 0 ? C_BULL : strategy.position_size < 0 ? C_BEAR : C_NEUTRAL
+    float riskCash = havePosition and not na(activeLossTicks) ? strategy.convert_to_account(activeLossTicks * syminfo.mintick * syminfo.pointvalue) * posSize : na
+    float openR = not na(riskCash) and riskCash > 0 ? strategy.openprofit / riskCash : na
+    f_row(panel, 8, "Side  |  Size", havePosition ? sideText + "  |  " + str.tostring(posSize) : "FLAT", sideInk)
+    f_row(panel, 9, "Entry", havePosition ? str.tostring(strategy.position_avg_price, format.mintick) : "—", C_TEXT)
+    f_row(panel, 10, "Stop loss", showBracket and not na(activeStop) ? str.tostring(activeStop, format.mintick) : "—", C_BEAR)
+    f_row(panel, 11, "Take profit", showBracket ? (na(activeTarget) ? "OFF" : str.tostring(activeTarget, format.mintick)) : "—", C_BULL)
+    f_row(panel, 12, "Open P/L  |  R", havePosition ? f_signed(strategy.openprofit, "0.00") + "  |  " + f_signed(openR, "0.00") + "R" : "—", not havePosition ? C_NEUTRAL : strategy.openprofit >= 0 ? C_BULL : C_BEAR)
+
+    f_row(panel, 14, "Risk per trade", str.tostring(riskPercent, "#.##") + "%", C_TEXT)
+    f_row(panel, 15, "Entries today", str.tostring(dailyEntries) + (maxDailyEntries > 0 ? " / " + str.tostring(maxDailyEntries) : ""), C_TEXT)
+    f_row(panel, 16, "Sensitivity  |  Period", str.tostring(sensitivity) + "  |  " + str.tostring(atrLength), C_TEXT)
+    f_row(panel, 17, "Opposite signal", str.upper(oppositeMode), C_TEXT)
+    f_row(panel, 18, "Execution", brokerExecution ? "MT5 BROKER SL/TP" : "PINE SIMULATION", brokerExecution ? C_WARN : C_TEXT)
+    float winRate = strategy.closedtrades > 0 ? float(strategy.wintrades) / strategy.closedtrades * 100 : na
+    float profitFactor = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : na
+    f_row(panel, 20, "Equity", str.tostring(strategy.equity, "0.00") + " " + strategy.account_currency, C_TEXT)
+    f_row(panel, 21, "Net P/L", f_signed(strategy.netprofit, "0.00") + "  (" + f_signed(strategy.netprofit_percent, "0.00") + "%)", strategy.netprofit >= 0 ? C_BULL : C_BEAR)
+    f_row(panel, 22, "Trades  |  Win rate", str.tostring(strategy.closedtrades) + "  |  " + (na(winRate) ? "N/A" : str.tostring(winRate, "0.0") + "%"), C_TEXT)
+    f_row(panel, 23, "Profit factor", na(profitFactor) ? "N/A" : str.tostring(profitFactor, "0.00"), na(profitFactor) ? C_NEUTRAL : profitFactor >= 1 ? C_BULL : C_BEAR)
+    f_row(panel, 24, "Max drawdown", str.tostring(strategy.max_drawdown, "0.00") + "  (" + str.tostring(strategy.max_drawdown_percent, "0.00") + "%)", C_BEAR)

@@ -1,0 +1,49 @@
+# Replace this hostname with a DNS A record pointing directly to the VPS IPv4.
+# Keep Caddy admin on localhost. Access logging is intentionally OFF: the path has a token.
+{
+    admin 127.0.0.1:2019
+    log default {
+        output file logs/caddy.jsonl {
+            roll_size 5MiB
+            roll_keep 5
+        }
+        format filter {
+            wrap json
+            fields {
+                request>uri delete
+                request>headers>Authorization delete
+                request>headers>Cookie delete
+            }
+        }
+    }
+}
+
+trade.example.com {
+    request_body {
+        max_size 16KB
+    }
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        Cache-Control "no-store"
+    }
+    @tradingview {
+        method POST
+        path /api/v1/webhooks/tradingview/*
+        remote_ip 52.89.214.238 34.212.75.30 54.218.53.128 52.32.178.7
+    }
+    handle @tradingview {
+        reverse_proxy 127.0.0.1:8000
+    }
+    @health {
+        method GET
+        path /health
+    }
+    handle @health {
+        reverse_proxy 127.0.0.1:8000
+    }
+    # Detailed health, status and Swagger are deliberately local-only.
+    handle {
+        respond "Not found" 404
+    }
+}

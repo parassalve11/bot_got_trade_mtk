@@ -1,0 +1,1 @@
+{"context":{{strategy.order.alert_message}},"fill_price":{{strategy.order.price}},"action":"{{strategy.order.action}}","contracts":{{strategy.order.contracts}},"position":"{{strategy.market_position}}","position_size":{{strategy.market_position_size}},"previous_position":"{{strategy.prev_market_position}}","sent_at":"{{timenow}}"}

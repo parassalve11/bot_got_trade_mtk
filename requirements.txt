@@ -1,0 +1,2 @@
+# For development: python -m pip install -e ".[dev,mt5]"
+-e .[mt5]
