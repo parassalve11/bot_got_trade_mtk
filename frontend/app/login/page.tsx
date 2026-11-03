@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Lock, Zap } from "lucide-react";
+import { Eye, EyeOff, Lock, Zap } from "lucide-react";
 import { explain } from "@/lib/api";
 
 export default function LoginPage() {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
   const [server, setServer] = useState(process.env.NEXT_PUBLIC_MT5_SERVER ?? "MetaQuotes-Demo");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -19,7 +20,8 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ login: Number(login), password, server }),
+        // Copy/paste often adds invisible spaces around the password.
+        body: JSON.stringify({ login: Number(login), password: password.trim(), server: server.trim() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -53,8 +55,14 @@ export default function LoginPage() {
           <input id="login" inputMode="numeric" autoComplete="username" required value={login}
             onChange={(e) => setLogin(e.target.value.replace(/\D/g, ""))} className={`num ${input}`} placeholder="115042927" />
           <label className="mt-4 block text-xs font-medium text-slate-700" htmlFor="password">Password</label>
-          <input id="password" type="password" autoComplete="current-password" required value={password}
-            onChange={(e) => setPassword(e.target.value)} className={input} />
+          <div className="relative">
+            <input id="password" type={show ? "text" : "password"} autoComplete="current-password" required value={password}
+              onChange={(e) => setPassword(e.target.value)} className={`${input} pr-10`} />
+            <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Hide password" : "Show password"}
+              className="absolute right-2 top-1/2 mt-0.5 -translate-y-1/2 rounded p-1 text-slate-500 hover:text-slate-800">
+              {show ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
           <label className="mt-4 block text-xs font-medium text-slate-700" htmlFor="server">Server</label>
           <input id="server" required value={server} onChange={(e) => setServer(e.target.value)} className={input} />
           {error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
