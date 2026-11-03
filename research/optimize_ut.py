@@ -1,9 +1,14 @@
-"""Walk-forward grid search of the UT engine on 1 year of MT5 metal candles.
+"""Walk-forward grid search of the UT engine on 1 year of MT5 candles (v2).
 
-Train: first ~9 months. Test: last ~3 months (never used for selection).
-Selection: best *neighbourhood-averaged* train score (robustness), train net R > 0.
+Train: 3 Nov 2025 - 2 Aug 2026. Test: 3 Aug 2026 onwards (never used for selection).
+
+v2 lessons (see docs/METALS_OPTIMIZATION.md):
+- "Close only" alternates open/close signals, so results depend on the starting state.
+  Every setting is replayed from two starting phases and judged on the WORSE one.
+- One strong month can hide losing months: the share of profitable train months is
+  stored and enforced by research/analyze_ut.py.
 Signals come from app.signals.ut_engine (the exact live maths); the replay is vectorised.
-Usage: optimize.py DATA_DIR OUT_JSON
+Usage: optimize_ut.py DATA_DIR OUT_JSON
 """
 import itertools
 import json
@@ -71,25 +76,29 @@ def first_exit(b, side, fill, sl, tp):
     return None, None, None
 
 
-def simulate(b, sig_idx, sig_side, risk_atr, tick, cost, stop_atr, rr, opp, session_ok):
+def simulate(b, sig_idx, sig_side, risk_atr, tick, cost, stop_atr, rr, opp, session_ok, skip=0, start=START):
+    """Replay from `start` flat. `skip` ignores the first N signals (shifts the open/close phase)."""
     n = len(b["close"])
-    trades, pos = [], None
+    trades, pos, seen = [], None, 0
 
-    def book(p, exit_idx, price, why):
+    def book(p, price, why):
         r = ((price - p["entry"]) * p["side"] - cost) / p["dist"]
         trades.append((b["time"][p["fill"]], r, why))
 
     for i, side in zip(sig_idx.tolist(), sig_side.tolist()):
-        if b["time"][i] < START or i + 1 >= n:
+        if b["time"][i] < start or i + 1 >= n:
+            continue
+        seen += 1
+        if seen <= skip:
             continue
         if pos and pos["exit"] is not None and pos["exit"] <= i:
-            book(pos, pos["exit"], pos["exit_price"], pos["why"])
+            book(pos, pos["exit_price"], pos["why"])
             pos = None
         allowed = session_ok[i]
         if pos and pos["side"] == side:
             continue
         if pos:
-            book(pos, i + 1, b["open"][i + 1], "OPP")
+            book(pos, b["open"][i + 1], "OPP")
             pos = None
             if opp != "Close + reverse":
                 continue
@@ -103,58 +112,82 @@ def simulate(b, sig_idx, sig_side, risk_atr, tick, cost, stop_atr, rr, opp, sess
         e, price, why = first_exit(b, side, i + 1, sl, tp)
         pos = dict(side=side, fill=i + 1, entry=entry, dist=loss_ticks * tick, exit=e, exit_price=price, why=why)
     if pos and pos["exit"] is not None:
-        book(pos, pos["exit"], pos["exit_price"], pos["why"])
+        book(pos, pos["exit_price"], pos["why"])
     return trades
 
 
-def stats(rs):
+def month(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m")
+
+
+def stats(trades):
+    rs = [r for _, r, _ in trades]
     if not rs:
-        return dict(n=0, wr=0, net=0, pf=0, exp=0, dd=0, score=-99)
+        return dict(n=0, wr=0, net=0, pf=0, exp=0, dd=0, score=-99, months_pos=0, tp_share=0)
     a = np.array(rs)
     wins, losses = a[a > 0].sum(), -a[a <= 0].sum()
     eq = np.cumsum(a)
     dd = float((np.maximum.accumulate(np.concatenate([[0], eq]))[1:] - eq).max())
     exp = float(a.mean())
+    per_month = {}
+    for t, r, _ in trades:
+        per_month[month(t)] = per_month.get(month(t), 0) + r
     # t-stat-like score: rewards expectancy that is consistent over many trades.
     score = exp / (a.std() + 1e-9) * math.sqrt(len(a))
     return dict(n=len(a), wr=float((a > 0).mean()), net=float(a.sum()), pf=float(wins / losses) if losses else 99,
-                exp=exp, dd=dd, score=float(score))
+                exp=exp, dd=dd, score=float(score),
+                months_pos=float(np.mean([v > 0 for v in per_month.values()])),
+                tp_share=float(np.mean([w == "TP" for _, _, w in trades])))
 
 
-results = []
-for sym in ("XAUUSD", "XAGUSD"):
-    for tf in TFS:
-        b = load(sym, tf)
-        tick = float(b["tick"])
-        hours = ((b["time"] + TF_SECONDS[tf]) % 86400) / 3600  # candle close hour UTC
-        sessions = {"all": np.ones(len(hours), bool), "07-20": (hours >= 7) & (hours <= 20)}
-        risk_atr = np.array(atr(b["high"].tolist(), b["low"].tolist(), b["close"].tolist(), 14))
-        for sens, atr_len in itertools.product(GRID["sens"], GRID["atr_len"]):
-            idx, sides = signals(b, sens, atr_len)
-            for stop_atr, rr, opp, sess in itertools.product(GRID["stop_atr"], GRID["rr"], GRID["opp"], GRID["session"]):
-                trades = simulate(b, idx, sides, risk_atr, tick, COST[sym], stop_atr, rr, opp, sessions[sess])
-                train = [r for t, r, _ in trades if t < SPLIT]
-                test = [r for t, r, _ in trades if t >= SPLIT]
-                results.append(dict(sym=sym, tf=tf, sens=sens, atr_len=atr_len, stop_atr=stop_atr, rr=rr, opp=opp,
-                                    session=sess, train=stats(train), test=stats(test), all=stats(train + test)))
-        print("done", sym, tf, flush=True)
+def worse(a, b):
+    return a if a["score"] <= b["score"] else b
 
-# Robustness: average train score over grid neighbours (±1 step in each numeric dimension).
-keyed = {(r["sym"], r["tf"], r["opp"], r["session"], r["sens"], r["atr_len"], r["stop_atr"], r["rr"]): r for r in results}
-pos = {k: {v: i for i, v in enumerate(GRID[k])} for k in ("sens", "atr_len", "stop_atr", "rr")}
-for r in results:
-    vals = []
-    for d in itertools.product((-1, 0, 1), repeat=4):
-        coords = []
-        for dim, delta in zip(("sens", "atr_len", "stop_atr", "rr"), d):
-            j = pos[dim][r[dim]] + delta
-            if not 0 <= j < len(GRID[dim]):
-                break
-            coords.append(GRID[dim][j])
-        else:
-            n = keyed.get((r["sym"], r["tf"], r["opp"], r["session"], *coords))
-            if n:
-                vals.append(n["train"]["score"])
-    r["robust"] = float(np.mean(vals))
-json.dump(results, open(OUT, "w"))
-print("saved", len(results))
+
+if __name__ == "__main__":
+    results = []
+    for sym in ("XAUUSD", "XAGUSD"):
+        for tf in TFS:
+            b = load(sym, tf)
+            tick = float(b["tick"])
+            hours = ((b["time"] + TF_SECONDS[tf]) % 86400) / 3600  # candle close hour UTC
+            sessions = {"all": np.ones(len(hours), bool), "07-20": (hours >= 7) & (hours <= 20)}
+            risk_atr = np.array(atr(b["high"].tolist(), b["low"].tolist(), b["close"].tolist(), 14))
+            for sens, atr_len in itertools.product(GRID["sens"], GRID["atr_len"]):
+                idx, sides = signals(b, sens, atr_len)
+                for stop_atr, rr, opp, sess in itertools.product(
+                    GRID["stop_atr"], GRID["rr"], GRID["opp"], GRID["session"]
+                ):
+                    args = (b, idx, sides, risk_atr, tick, COST[sym], stop_atr, rr, opp, sessions[sess])
+                    phase = [simulate(*args, skip=k) for k in (0, 1)]
+                    train = [stats([x for x in p if x[0] < SPLIT]) for p in phase]
+                    test = [stats([x for x in p if x[0] >= SPLIT]) for p in phase]
+                    # Test phase uses a continuous replay (realistic state on the first test day).
+                    results.append(dict(
+                        sym=sym, tf=tf, sens=sens, atr_len=atr_len, stop_atr=stop_atr, rr=rr, opp=opp,
+                        session=sess, train=worse(*train), train_phases=train,
+                        test=test[0], test_other_phase=test[1],
+                        test_fresh=stats([x for x in simulate(*args, start=SPLIT) if x[0] >= SPLIT]),
+                    ))
+            print("done", sym, tf, flush=True)
+
+    # Robustness: average WORST-PHASE train score over grid neighbours (±1 step per numeric dimension).
+    keyed = {(r["sym"], r["tf"], r["opp"], r["session"], r["sens"], r["atr_len"], r["stop_atr"], r["rr"]): r
+             for r in results}
+    pos = {k: {v: i for i, v in enumerate(GRID[k])} for k in ("sens", "atr_len", "stop_atr", "rr")}
+    for r in results:
+        vals = []
+        for d in itertools.product((-1, 0, 1), repeat=4):
+            coords = []
+            for dim, delta in zip(("sens", "atr_len", "stop_atr", "rr"), d):
+                j = pos[dim][r[dim]] + delta
+                if not 0 <= j < len(GRID[dim]):
+                    break
+                coords.append(GRID[dim][j])
+            else:
+                n = keyed.get((r["sym"], r["tf"], r["opp"], r["session"], *coords))
+                if n:
+                    vals.append(n["train"]["score"])
+        r["robust"] = float(np.mean(vals))
+    json.dump(results, open(OUT, "w"))
+    print("saved", len(results))

@@ -15,7 +15,8 @@ you opt in (see the end of this page). The evidence is modest; read the caveats.
   $0.03/oz silver** (the demo's recorded spreads are unrealistically small).
 - Selection: highest **neighbourhood-averaged** train score (expectancy ÷ volatility × √trades),
   i.e. settings whose neighbours also worked, not the single best result.
-- Reproduce: `research/export_mt5_data.py` → `research/optimize_ut.py` → `research/analyze_ut.py`.
+- Reproduce: `research/export_mt5_data.py` → `research/optimize_ut.py` → `research/analyze_ut.py`;
+  detailed per-preset report: `research/report_preset.py`.
 
 ## Results (R = one trade's risk; 0.5% risk → 1 R = $500 on $100k)
 
@@ -26,9 +27,26 @@ you opt in (see the end of this page). The evidence is modest; read the caveats.
 | Silver, old default 15m | sens 6.4, ATR 2, stop 2×, RR 1.5 | 230 trades, 38.7% win, −16.2 R | 73 trades, 41.1% win, −3.0 R |
 | **Silver preset 30m** | sens 4.0, ATR 10, stop 3×, RR 3, close only | 104 trades, 41.3% win, +28.1 R, PF 1.53 | **36 trades, 38.9% win, +5.2 R, PF 1.26** |
 
-The win rate does **not** go up (≈39–41%). Profit comes from wider stops and 3:1 targets:
-break-even at 3:1 is a 25% win rate. Session filtering (07–20 UTC) and "Close + reverse"
-did not help.
+The win rate does **not** go up (≈39–41%). **Correction (v2):** profit does *not* come from
+the 3:1 target. On the unseen test only 4% (gold) and 22% (silver) of trades reached take-profit;
+most close on the next opposite UT signal, so average wins are ≈0.9 R and losses ≈0.5 R. The
+3× ATR stop acts as a wide safety net; the target value matters little, especially for gold.
+Session filtering (07–20 UTC) and "Close + reverse" did not help.
+
+## Lessons applied in v2 (re-run 3 Nov 2026)
+
+| Mistake in v1 | Fix in v2 | Outcome |
+|---|---|---|
+| Credited profit to the 3:1 target | Measure the share of take-profit exits | Corrected above |
+| "Close only" alternates open/close signals, so the start state changes results (a fresh start on 3 Aug gave +6.7 R vs +3.4 R) | Score every setting on the **worse** of two starting phases; report test from continuous, shifted and fresh starts | The effect fades over a long run: all three test replays agree. It matters only in the first weeks after the bot starts |
+| Total profit hid losing months | Require ≥ 60% profitable train months | Gold preset 78%, silver 100% of train months |
+| Pine commission 0.05% (~$4/oz gold) did not match the $0.30/oz tested | Pine default now 0.004% per side | TradingView Strategy Tester is comparable (silver: set ~0.03%) |
+
+**Same presets selected:** under the stricter v2 rules the Gold 1H and Silver 30m presets
+are still ranked #1, so they are unchanged. Of the top 50 v2 picks, only 8 (gold) and 14
+(silver) were profitable on the test period in every starting phase, so overfitting remains
+the main risk. On the test, both presets were profitable in only half of the months
+(gold: September carried the result; shorts made the money while gold fell).
 
 ## Caveats
 

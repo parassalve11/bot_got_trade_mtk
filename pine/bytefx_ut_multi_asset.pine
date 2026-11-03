@@ -3,7 +3,7 @@
 strategy("BYTEFX UT Multi-Asset v1.3", shorttitle = "BYTEFX UT", overlay = true, pyramiding = 0,
      initial_capital = 10000, currency = currency.USD,
      default_qty_type = strategy.fixed, default_qty_value = 1,
-     commission_type = strategy.commission.percent, commission_value = 0.05,
+     commission_type = strategy.commission.percent, commission_value = 0.004,
      slippage = 2, margin_long = 100, margin_short = 100,
      calc_on_every_tick = false, calc_on_order_fills = false,
      process_orders_on_close = false, fill_orders_on_standard_ohlc = true,
@@ -12,6 +12,8 @@ strategy("BYTEFX UT Multi-Asset v1.3", shorttitle = "BYTEFX UT", overlay = true,
 // ─────────────────────────────────────────────────────────────────────────────
 // BYTEFX UT Multi-Asset v1.3
 // v1.3: "Asset preset" input with walk-forward-tuned Gold 1H and Silver 30m settings.
+// v1.3: Default commission 0.004% per side (~spread cost of FX/gold CFDs). For silver use
+//       ~0.03% per side in Properties; set your broker's real costs for accurate results.
 // v1.2 changes (logic):
 //   • Dashboard status no longer hard-codes "CLOSE ONLY"; it shows the real opposite-signal mode.
 //   • Daily reset is safe on D/W/M charts (timeframe.change("1D") is not called there).
