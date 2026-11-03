@@ -10,6 +10,7 @@ import logging
 import math
 from datetime import datetime, timezone
 
+from app.control import effective_stream_mode
 from app.schemas import ENTRY_EVENTS, AlertEnvelope
 from app.signals.ut_engine import decide, htf_direction_at, htf_series, load_streams, signal_series
 from app.trading.errors import Reject, Retryable
@@ -24,14 +25,17 @@ class SignalEngine:
         self.settings, self.db, self.broker, self.symbols = settings, db, broker, symbols
         self.mode = mode or settings.engine_mode  # "watch" logs only, "trade" enqueues orders
         all_streams = streams if streams is not None else load_streams(settings.engine_config_path)
-        self.streams = [s for s in all_streams if s.enabled]
+        self.streams = list(all_streams)  # disabled streams can be switched on from the dashboard
         self.last_error = {}
 
     def poll(self, now: float):
         for stream in self.streams:
             key = (stream.instance, stream.tv_symbol)
+            mode = effective_stream_mode(self.db, stream, self.mode)
+            if mode == "off":
+                continue
             try:
-                self.poll_stream(stream, now)
+                self.poll_stream(stream, now, watch_only=mode != "trade")
                 self.last_error.pop(key, None)
             except (Retryable, Reject) as exc:
                 if self.last_error.get(key) != str(exc):  # Log changes, not every poll.
@@ -46,7 +50,8 @@ class SignalEngine:
     def state_key(self, stream):
         return f"engine:{stream.instance}:{stream.tv_symbol}:{stream.timeframe}"
 
-    def poll_stream(self, stream, now: float):
+    def poll_stream(self, stream, now: float, *, watch_only: bool | None = None):
+        watch_only = stream.watch_only if watch_only is None else watch_only
         rule = self.symbols.resolve(stream.tv_symbol, require_enabled=False)
         recent = self.broker.rates(rule.broker_symbol, stream.timeframe, 3)
         closed = [bar for bar in recent if bar["time"] + stream.seconds <= now]
@@ -78,7 +83,7 @@ class SignalEngine:
         action = decide(signal, position["side"] if position else None, stream, trend)
         if action:
             alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
-            self.emit(alert, rule, now, watch_only=stream.watch_only)
+            self.emit(alert, rule, now, watch_only=watch_only)
         self.db.set_state(key, last["time"])
 
     def journal_position(self, stream):

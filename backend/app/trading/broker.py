@@ -23,6 +23,7 @@ class Account:
     trade_mode: int  # 0 demo, 1 contest, 2 real
     trade_allowed: bool
     currency: str = "USD"
+    balance: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class Position:
     tp: float
     magic: int
     comment: str
+    profit: float = 0.0  # floating P/L incl. swap
 
 
 class Broker(Protocol):

@@ -306,22 +306,12 @@ def main(argv=None):
             resolve_no_fill(settings, db, args.operation_key, args.note)
             print("Operation abandoned, original event rejected, and audit note saved. No order resent.")
         else:
-            if len(args.note.strip()) < 10:
-                raise ValueError("Provide a meaningful audit note (at least 10 characters)")
-            if args.command in ("resume", "acknowledge-hold") and db.operations(["UNKNOWN", "SENDING"]):
-                raise ValueError("Uncertain operations must be reconciled before resuming")
-            if args.command == "resume" and db.get_state("safety_hold"):
-                raise ValueError("Resolve the cause, then acknowledge the safety hold first")
+            from app import control
+
             if args.command == "acknowledge-hold":
-                beat = db.get_state("worker", {})
-                if time.time() - beat.get("at", 0) > settings.worker_health_seconds or not beat.get(
-                    "reconciled"
-                ):
-                    raise ValueError("A fresh clean worker reconciliation is required")
-                db.set_state("safety_hold", None)
+                control.acknowledge_hold(db, settings, args.note)
             else:
-                db.set_state("operator_pause", args.command == "pause")
-            db.audit("operator_" + args.command, {"note": args.note})
+                control.set_paused(db, args.command == "pause", args.note)
             print("Control state saved. Broker protective orders remain in place.")
         return 0
     except Exception as exc:

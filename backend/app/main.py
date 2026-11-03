@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health, webhook
+from app.api import dashboard, health, webhook
 from app.config import Settings, get_settings
 from app.database import Database
 from app.logging_config import configure_logging
@@ -33,4 +33,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.limiter = IntakeLimiter()
     app.include_router(webhook.router)
     app.include_router(health.router)
+    app.include_router(dashboard.router)
     return app

@@ -21,6 +21,8 @@ class Worker:
         self.executor = Executor(settings, db, broker, symbols, clock=clock)
         self.reconciler = Reconciler(self.executor)
         self.reconciled = False
+        self.last_equity_record = 0.0
+        self.last_history = 0.0
         self.engine = None
         if settings.engine_mode != "off":
             from app.signals.runner import SignalEngine
@@ -53,6 +55,8 @@ class Worker:
             daily = self.executor.risk.daily(account, self.clock())
             clean = self.reconciler.run(self.clock())
             self.reconciled = clean
+            self.process_close_requests()
+            self.publish_snapshot(account)
             ready = bool(
                 clean
                 and account.trade_allowed
@@ -67,6 +71,70 @@ class Worker:
         except (SafetyError, Uncertain, Reject) as exc:
             self.executor.hold(str(exc), self.clock())
             self.heartbeat(True, False, str(exc))
+
+    def process_close_requests(self):
+        """Dashboard close requests. Executed here so every MT5 call stays in the worker."""
+        for request in self.db.pending_close_requests():
+            now = self.clock()
+            record = self.db.position(request["instance"], request["trade_id"])
+            if record is None or record["status"] != "OPEN":
+                self.db.finish_close_request(request["id"], "NOT_OPEN", now)
+                continue
+            details = {"instance": record["instance"], "trade_id": record["trade_id"], "by": request["requested_by"]}
+            try:
+                self.executor.close(self.db.event(record["event_pk"]), record, now, kind="MANUAL_CLOSE")
+            except Retryable as exc:
+                if now - request["requested_at"] > 120:
+                    self.db.finish_close_request(request["id"], "FAILED", now, str(exc))
+                continue
+            except (Reject, Uncertain, SafetyError) as exc:
+                self.executor.hold(str(exc), now)
+                self.db.finish_close_request(request["id"], "FAILED", now, str(exc))
+                self.db.audit("operator_close_failed", {**details, "reason": str(exc)}, now)
+                continue
+            self.db.finish_close_request(request["id"], "CLOSED", now)
+            self.db.audit("operator_close_executed", details, now)
+
+    def publish_snapshot(self, account):
+        """Account/position snapshot for the dashboard; the API never calls MT5 itself."""
+        now = self.clock()
+        try:
+            positions = self.broker.positions()
+        except Retryable:
+            return
+        self.db.set_state("account_snapshot", {
+            "at": now,
+            "currency": account.currency,
+            "balance": account.balance,
+            "equity": account.equity,
+            "margin_free": account.margin_free,
+            "floating": account.equity - account.balance if account.balance else 0.0,
+            "positions": [
+                {"ticket": p.ticket, "identifier": p.identifier, "symbol": p.symbol, "side": p.side,
+                 "volume": p.volume, "price_open": p.price_open, "sl": p.sl, "tp": p.tp, "profit": p.profit,
+                 "magic": p.magic, "bot": p.magic == self.settings.magic_number}
+                for p in positions
+            ],
+        })
+        if now - self.last_equity_record >= 300 and account.balance:
+            self.db.record_equity(account.balance, account.equity, now)
+            self.last_equity_record = now
+        if now - self.last_history >= 60:
+            try:
+                deals = self.broker.deals(now - 90 * 86400)
+            except Retryable:
+                return
+            closed = {}
+            for d in deals:
+                if d.get("magic") != self.settings.magic_number:
+                    continue
+                item = closed.setdefault(str(d["position_id"]), {"profit": 0.0, "closed_at": None, "close_price": None})
+                item["profit"] += d.get("profit", 0.0) + d.get("commission", 0.0) + d.get("swap", 0.0) + d.get("fee", 0.0)
+                if d.get("entry") in (1, 3):
+                    item["closed_at"] = d.get("time_msc", d["time"] * 1000) / 1000
+                    item["close_price"] = d.get("price")
+            self.db.set_state("deal_history", closed)
+            self.last_history = now
 
     def process_one(self):
         row = self.db.claim(self.clock())

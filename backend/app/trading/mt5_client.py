@@ -66,6 +66,7 @@ class MT5Client:
             account.trade_mode,
             allowed,
             account.currency,
+            account.balance,
         )
 
     def symbol(self, name):
@@ -116,6 +117,7 @@ class MT5Client:
                 p.tp,
                 p.magic,
                 p.comment,
+                p.profit + p.swap,
             )
             for p in values
         ]

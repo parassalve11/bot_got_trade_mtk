@@ -1,0 +1,50 @@
+{
+  "gold1h_hw": {
+    "period": "3 Aug - 3 Nov 2026 (unseen test)",
+    "trades": 17,
+    "wins": 11,
+    "losses": 6,
+    "win_rate": 0.647,
+    "net": 1243,
+    "gross_profit": 4076,
+    "gross_loss": -2833,
+    "max_drawdown": -1084,
+    "note": "Walk-forward test, $500 risk per trade, $0.30/oz cost"
+  },
+  "gold1h": {
+    "period": "3 Aug - 3 Nov 2026 (unseen test)",
+    "trades": 51,
+    "wins": 20,
+    "losses": 31,
+    "win_rate": 0.392,
+    "net": 1697,
+    "gross_profit": 9445,
+    "gross_loss": -7748,
+    "max_drawdown": -2734,
+    "note": "Walk-forward test, $500 risk per trade, $0.30/oz cost"
+  },
+  "silver30": {
+    "period": "3 Aug - 3 Nov 2026 (unseen test)",
+    "trades": 36,
+    "wins": 14,
+    "losses": 22,
+    "win_rate": 0.389,
+    "net": 2600,
+    "gross_profit": null,
+    "gross_loss": null,
+    "max_drawdown": -3100,
+    "note": "Walk-forward test, $500 risk per trade, $0.03/oz cost"
+  },
+  "engine": {
+    "period": "3 Sep - 3 Nov 2026",
+    "trades": 42,
+    "wins": 20,
+    "losses": 22,
+    "win_rate": 0.476,
+    "net": 3913,
+    "gross_profit": null,
+    "gross_loss": null,
+    "max_drawdown": null,
+    "note": "EURUSD 15m default settings, demo spread, $500 risk per trade"
+  }
+}

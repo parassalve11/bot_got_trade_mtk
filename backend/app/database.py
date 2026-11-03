@@ -48,6 +48,18 @@ CREATE TABLE IF NOT EXISTS stream_watermarks (
  instance TEXT NOT NULL, symbol TEXT NOT NULL, signal_time_ms INTEGER NOT NULL,
  PRIMARY KEY(instance,symbol)
 );
+CREATE TABLE IF NOT EXISTS close_requests (
+ id INTEGER PRIMARY KEY, instance TEXT NOT NULL, trade_id TEXT NOT NULL, note TEXT NOT NULL,
+ requested_by TEXT NOT NULL, requested_at REAL NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING',
+ finished_at REAL, error TEXT
+);
+CREATE TABLE IF NOT EXISTS dash_sessions (
+ token_hash TEXT PRIMARY KEY, role TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
+ revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS equity_history (
+ at REAL PRIMARY KEY, balance REAL NOT NULL, equity REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit (
  id INTEGER PRIMARY KEY, at REAL NOT NULL, action TEXT NOT NULL, details_json TEXT NOT NULL
 );
@@ -409,6 +421,93 @@ class Database:
             "daily_risk": dict(daily) if daily else None,
             "uncertain_operations": unresolved,
         }
+
+    # ---- dashboard: manual close requests (executed by the worker, never by the API) ----
+    def add_close_request(self, instance: str, trade_id: str, note: str, requested_by: str, now: float):
+        with self.connect(write=True) as db:
+            row = db.execute(
+                "SELECT status FROM positions WHERE instance=? AND trade_id=?", (instance, trade_id)
+            ).fetchone()
+            if not row or row["status"] != "OPEN":
+                raise ValueError("Position is not open")
+            if db.execute(
+                "SELECT 1 FROM close_requests WHERE instance=? AND trade_id=? AND status='PENDING'",
+                (instance, trade_id),
+            ).fetchone():
+                raise ValueError("A close request for this position is already pending")
+            db.execute(
+                "INSERT INTO close_requests(instance,trade_id,note,requested_by,requested_at) VALUES (?,?,?,?,?)",
+                (instance, trade_id, note, requested_by, now),
+            )
+
+    def pending_close_requests(self):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute("SELECT * FROM close_requests WHERE status='PENDING' ORDER BY id")]
+
+    def finish_close_request(self, request_id: int, status: str, now: float, error=None):
+        with self.connect(write=True) as db:
+            db.execute(
+                "UPDATE close_requests SET status=?,finished_at=?,error=? WHERE id=?",
+                (status, now, error, request_id),
+            )
+
+    def close_requests(self, limit=25):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute("SELECT * FROM close_requests ORDER BY id DESC LIMIT ?", (limit,))]
+
+    # ---- dashboard: sessions (only token hashes are stored) ----
+    def add_session(self, token_hash: str, role: str, now: float, expires_at: float):
+        with self.connect(write=True) as db:
+            db.execute("DELETE FROM dash_sessions WHERE expires_at<? OR revoked=1", (now,))
+            db.execute("INSERT INTO dash_sessions VALUES (?,?,?,?,0)", (token_hash, role, now, expires_at))
+
+    def session(self, token_hash: str, now: float):
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM dash_sessions WHERE token_hash=? AND revoked=0 AND expires_at>?", (token_hash, now)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def revoke_session(self, token_hash: str):
+        with self.connect(write=True) as db:
+            db.execute("UPDATE dash_sessions SET revoked=1 WHERE token_hash=?", (token_hash,))
+
+    # ---- dashboard: equity curve and history ----
+    def record_equity(self, balance: float, equity: float, now: float):
+        with self.connect(write=True) as db:
+            db.execute("INSERT OR REPLACE INTO equity_history VALUES (?,?,?)", (now, balance, equity))
+
+    def equity_history(self, since: float):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute(
+                "SELECT at,balance,equity FROM equity_history WHERE at>=? ORDER BY at", (since,)
+            )]
+
+    def positions_history(self, limit=200):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute(
+                "SELECT * FROM positions WHERE identifier IS NOT NULL ORDER BY COALESCE(opened_at,0) DESC LIMIT ?",
+                (limit,),
+            )]
+
+    def audit_rows(self, limit=100, actions=None):
+        with self.connect() as db:
+            if actions:
+                rows = db.execute(
+                    f"SELECT * FROM audit WHERE action IN ({','.join('?' for _ in actions)}) ORDER BY id DESC LIMIT ?",
+                    (*actions, limit),
+                )
+            else:
+                rows = db.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))
+            return [{**dict(r), "details": json.loads(r["details_json"])} for r in rows]
+
+    def events(self, limit=100):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute(
+                "SELECT id,instance,event_id,trade_id,event_type,symbol,broker_symbol,status,error,attempts,"
+                "received_at,processed_at,payload_json FROM webhook_events ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )]
 
     def backup(self, destination: Path):
         destination = destination.resolve()

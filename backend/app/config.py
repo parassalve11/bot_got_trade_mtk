@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     # Built-in signal engine (MT5 candles, no TradingView): off | watch (log only) | trade
     engine_mode: Literal["off", "watch", "trade"] = "off"
     engine_config_path: Path = Path("config/engine.json")
+    # Dashboard (Next.js on Vercel). Disabled until DASH_PROXY_SECRET is set.
+    # Master password (MT5_PASSWORD) = admin; investor (read-only) password = viewer (optional).
+    mt5_investor_password: SecretStr = SecretStr("")
+    dash_proxy_secret: SecretStr = SecretStr("")
+    dash_session_hours: int = Field(default=12, ge=1, le=168)
 
     @model_validator(mode="after")
     def validate_configuration(self):
@@ -78,6 +83,9 @@ class Settings(BaseSettings):
                 raise ValueError("All allowlists must be nonempty")
         if self.engine_mode != "off" and self.trading_mode == "DISABLED":
             raise ValueError("ENGINE_MODE needs TRADING_MODE=DEMO or LIVE (it reads MT5 candles)")
+        proxy = self.dash_proxy_secret.get_secret_value()
+        if proxy and (len(proxy) < 32 or proxy in secrets):
+            raise ValueError("DASH_PROXY_SECRET must be a distinct random value of at least 32 characters")
         for value in self.webhook_allowed_ips:
             ip_network(value, strict=False)
         return self
