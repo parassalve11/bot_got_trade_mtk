@@ -69,6 +69,92 @@ def mt5_preflight(settings, db, broker, mapper):
     }
 
 
+def simulate_history(bars, stream, tick_size):
+    """Approximate Pine replay on closed MT5 candles: fills at next open, bracket SL/TP.
+
+    Same signal maths as live trading. Fills/costs are simplified; for comparison only.
+    """
+    from app.signals.ut_engine import decide, signal_series
+
+    signals = signal_series(bars, stream, tick_size)
+    trades, position = [], None
+    for i, bar in enumerate(bars):
+        if position and i >= position["fill_index"]:
+            long = position["side"] == "LONG"
+            hit_sl = bar["low"] <= position["sl"] if long else bar["high"] >= position["sl"]
+            hit_tp = position["tp"] is not None and (
+                bar["high"] >= position["tp"] if long else bar["low"] <= position["tp"]
+            )
+            if hit_sl or hit_tp:  # Both in one candle: assume the stop (conservative).
+                position.update(exit_time=bar["time"], exit=position["sl"] if hit_sl else position["tp"],
+                                reason="stop_loss" if hit_sl else "take_profit")
+                trades.append(position)
+                position = None
+        signal = signals[i]
+        action = decide(signal, position["side"] if position else None, stream)
+        if not action or i + 1 >= len(bars):
+            continue
+        fill = bars[i + 1]["open"]
+        if action in ("close", "reverse"):
+            position.update(exit_time=bars[i + 1]["time"], exit=fill, reason="opposite_signal")
+            trades.append(position)
+            position = None
+        if action in ("entry", "reverse"):
+            sign = 1 if signal.side == "LONG" else -1
+            position = dict(
+                side=signal.side, signal_time=bar["time"] + stream.seconds, fill_index=i + 1,
+                entry=fill, sl=fill - sign * signal.loss_ticks * tick_size,
+                tp=None if signal.profit_ticks is None else fill + sign * signal.profit_ticks * tick_size,
+            )
+    for trade in trades:
+        sign = 1 if trade["side"] == "LONG" else -1
+        trade["result_ticks"] = round((trade["exit"] - trade["entry"]) * sign / tick_size)
+    return signals, trades, position
+
+
+def engine_scan(settings, broker, mapper, bars_count):
+    from datetime import datetime, timezone
+
+    from app.signals.ut_engine import load_streams
+
+    def stamp(epoch):
+        utc = datetime.fromtimestamp(epoch, timezone.utc)
+        return utc.strftime("%Y-%m-%d %H:%M UTC") + " (" + utc.astimezone().strftime("%H:%M local") + ")"
+
+    for stream in [s for s in load_streams(settings.engine_config_path) if s.enabled]:
+        rule = mapper.resolve(stream.tv_symbol, require_enabled=False)
+        symbol = broker.symbol(rule.broker_symbol)
+        now = time.time()
+        bars = [b for b in broker.rates(rule.broker_symbol, stream.timeframe, bars_count)
+                if b["time"] + stream.seconds <= now]
+        signals, trades, open_trade = simulate_history(bars, stream, symbol.tick_size)
+        warmup = min(len(bars), max(200, stream.risk_atr_length * 10))
+        print()
+        print(f"=== {stream.tv_symbol} -> {rule.broker_symbol}, {stream.timeframe}m, instance '{stream.instance}' ===")
+        print(f"Candles: {stamp(bars[0]['time'])} to {stamp(bars[-1]['time'] + stream.seconds)}")
+        print()
+        print("UT signals (candle close time = when TradingView would show the arrow):")
+        for i, signal in enumerate(signals):
+            if signal and i >= warmup:
+                print(f"  {stamp(bars[i]['time'] + stream.seconds)}  {'BUY ' if signal.side == 'LONG' else 'SELL'}"
+                      f"  close {signal.close:.{symbol.digits}f}  stop {signal.loss_ticks:.0f} ticks  target "
+                      f"{'off' if signal.profit_ticks is None else f'{signal.profit_ticks:.0f} ticks'}")
+        shown = [t for t in trades if t["fill_index"] >= warmup]
+        print()
+        print("Simulated trades (approximate; ignores spread/commission):")
+        for t in shown:
+            print(f"  {t['side']:5} in {stamp(bars[t['fill_index']]['time'])} @ {t['entry']:.5f}  "
+                  f"out {stamp(t['exit_time'])} @ {t['exit']:.5f}  {t['reason']:15} {t['result_ticks']:+d} ticks")
+        if open_trade:
+            print(f"  {open_trade['side']:5} still open since {stamp(bars[open_trade['fill_index']]['time'])}")
+        wins = sum(t["result_ticks"] > 0 for t in shown)
+        if shown:
+            print()
+            print(f"Trades {len(shown)} | wins {wins} | losses {len(shown) - wins} | "
+                  f"win rate {wins / len(shown):.0%} | net {sum(t['result_ticks'] for t in shown):+d} ticks")
+        print("(First", warmup, "candles are indicator warm-up and are not listed.)")
+
+
 def resolve_no_fill(settings, db, key, note):
     # Exclusive lock prevents a live worker from sending while an operator resolves a journal entry.
     with WorkerLock(db.path.with_suffix(".worker.lock")):
@@ -114,6 +200,10 @@ def parser():
     api = commands.add_parser("api", help="Serve the API on loopback only")
     api.add_argument("--port", type=int, default=8000)
     commands.add_parser("worker", help="Run the sole MT5 worker")
+    scan = commands.add_parser(
+        "engine-scan", help="Read-only: list built-in engine signals on MT5 history for comparison"
+    )
+    scan.add_argument("--bars", type=int, default=2000)
     commands.add_parser("status", help="Read protected local operational state")
     for name in ("pause", "resume", "acknowledge-hold"):
         sub = commands.add_parser(name)
@@ -153,6 +243,15 @@ def main(argv=None):
             from app.trading.worker import run_worker
 
             run_worker(settings)
+            return 0
+        if args.command == "engine-scan":
+            # Read-only MT5 queries; no worker lock, so it can run beside a live worker.
+            broker = MT5Client(settings)
+            try:
+                broker.connect()
+                engine_scan(settings, broker, SymbolMapper(settings.symbols_path), max(300, args.bars))
+            finally:
+                broker.shutdown()
             return 0
         db = Database(settings.database_path)
         db.initialize()

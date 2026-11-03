@@ -8,6 +8,15 @@ from datetime import datetime, timezone
 from app.trading.broker import Account, Position, Symbol, Tick
 from app.trading.errors import Reject, Retryable
 
+TIMEFRAMES = {
+    "1": "TIMEFRAME_M1",
+    "5": "TIMEFRAME_M5",
+    "15": "TIMEFRAME_M15",
+    "30": "TIMEFRAME_M30",
+    "60": "TIMEFRAME_H1",
+    "240": "TIMEFRAME_H4",
+}
+
 
 class MT5Client:
     def __init__(self, settings):
@@ -153,6 +162,23 @@ class MT5Client:
         if value is None or not math.isfinite(value):
             raise Retryable("margin_calculation_unavailable")
         return float(value)
+
+    def rates(self, name, timeframe, count):
+        """Candles oldest-first with bar OPEN time in UTC; the last one may still be forming."""
+        values = self.mt5.copy_rates_from_pos(name, getattr(self.mt5, TIMEFRAMES[timeframe]), 0, count)
+        if values is None or len(values) == 0:
+            raise Retryable("rates_unavailable")
+        offset = self.settings.mt5_server_utc_offset_seconds
+        return [
+            dict(
+                time=float(v["time"]) - offset,
+                open=float(v["open"]),
+                high=float(v["high"]),
+                low=float(v["low"]),
+                close=float(v["close"]),
+            )
+            for v in values
+        ]
 
     def check(self, request):
         value = self.mt5.order_check(request)

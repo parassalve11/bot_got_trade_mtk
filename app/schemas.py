@@ -17,7 +17,7 @@ CLOSE_EVENTS = {"opposite_signal", "daily_loss", "date_end"}
 
 class Signal(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
-    source: Literal["tradingview"]
+    source: Literal["tradingview", "mt5_engine"]
     strategy: ShortText
     version: ShortText
     instance: ShortText

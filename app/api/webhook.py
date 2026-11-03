@@ -58,6 +58,8 @@ async def webhook(request: Request, token: str):
         # Do not echo the body back into proxy logs or clients.
         raise HTTPException(422, "invalid_alert_contract") from None
     sig = alert.context
+    if sig.source != "tradingview":
+        raise HTTPException(403, "source_not_allowed_on_webhook")
     if (
         sig.strategy not in settings.allowed_strategies
         or sig.version not in settings.allowed_versions

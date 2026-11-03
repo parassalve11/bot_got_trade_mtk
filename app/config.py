@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     allowed_timeframes: list[str] = ["15", "60", "240"]
     webhook_allowed_ips: list[str] = ["127.0.0.1", "::1"]
     enable_docs: bool = False
+    # Built-in signal engine (MT5 candles, no TradingView): off | watch (log only) | trade
+    engine_mode: Literal["off", "watch", "trade"] = "off"
+    engine_config_path: Path = Path("config/engine.json")
 
     @model_validator(mode="after")
     def validate_configuration(self):
@@ -73,6 +76,8 @@ class Settings(BaseSettings):
         ]:
             if not values:
                 raise ValueError("All allowlists must be nonempty")
+        if self.engine_mode != "off" and self.trading_mode == "DISABLED":
+            raise ValueError("ENGINE_MODE needs TRADING_MODE=DEMO or LIVE (it reads MT5 candles)")
         for value in self.webhook_allowed_ips:
             ip_network(value, strict=False)
         return self

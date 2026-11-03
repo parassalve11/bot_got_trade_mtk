@@ -2,7 +2,9 @@
 
 An integrated Pine v6 strategy, authenticated FastAPI webhook receiver, SQLite execution journal/queue, and single-account MT5 worker for Windows. Includes broker risk sizing, attached SL/TP, close/reverse handling, account/position ownership checks, restart reconciliation, local administration, and Caddy/Windows deployment files.
 
-**Start here: [the complete Windows + MT5 + TradingView setup guide](docs/MT5_SETUP.md).** For strategy inputs/backtesting, use [the TradingView guide](docs/TRADINGVIEW_SETUP.md).
+**Start here: [the complete Windows + MT5 + TradingView setup guide](docs/MT5_SETUP.md).**
+
+**No paid TradingView plan?** The worker can generate the same UT Bot signals from MT5 candles: see [the built-in signal engine](docs/SIGNAL_ENGINE.md). For strategy inputs/backtesting, use [the TradingView guide](docs/TRADINGVIEW_SETUP.md).
 
 ```text
 TradingView Pine v1.1 → HTTPS/Caddy → FastAPI → SQLite queue

@@ -27,6 +27,7 @@ class FakeBroker:
         self.slippage = 0
         self.next_ticket = 1000
         self.tick_age = 0
+        self.bars = {}  # symbol -> candles (oldest first), for the signal engine
 
     def connect(self):
         if self.offline:
@@ -65,6 +66,12 @@ class FakeBroker:
 
     def margin(self, side, symbol, volume, price):
         return volume * 1000
+
+    def rates(self, name, timeframe, count):
+        values = self.bars.get(name, [])[-count:]
+        if not values:
+            raise Retryable("rates_unavailable")
+        return [dict(v) for v in values]
 
     def check(self, request):
         assert "_meta" not in request

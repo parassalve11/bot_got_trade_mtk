@@ -21,6 +21,11 @@ class Worker:
         self.executor = Executor(settings, db, broker, symbols, clock=clock)
         self.reconciler = Reconciler(self.executor)
         self.reconciled = False
+        self.engine = None
+        if settings.engine_mode != "off":
+            from app.signals.runner import SignalEngine
+
+            self.engine = SignalEngine(settings, db, broker, symbols)
 
     def heartbeat(self, connected, ready, reason=None):
         self.db.set_state(
@@ -32,6 +37,7 @@ class Worker:
                 "reconciled": self.reconciled,
                 "reason": reason,
                 "mode": self.settings.trading_mode,
+                "engine": self.settings.engine_mode,
                 "account": "***" + str(self.settings.mt5_login)[-3:],
             },
         )
@@ -111,6 +117,9 @@ class Worker:
 
     def tick(self):
         self.maintain()
+        # Only generate signals from a connected, reconciled terminal.
+        if self.engine and self.reconciled:
+            self.engine.poll(self.clock())
         return self.process_one()
 
 

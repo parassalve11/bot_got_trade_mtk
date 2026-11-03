@@ -214,6 +214,14 @@ class Database:
                 WHERE id IN (SELECT event_pk FROM operations WHERE status='UNKNOWN')""")
             db.execute("UPDATE webhook_events SET status='QUEUED',next_attempt=0 WHERE status='PROCESSING'")
 
+    def pending_events(self, broker_symbol: str) -> int:
+        with self.connect() as db:
+            return db.execute(
+                "SELECT count(*) FROM webhook_events WHERE broker_symbol=? "
+                "AND status IN ('QUEUED','RETRY','PROCESSING')",
+                (broker_symbol,),
+            ).fetchone()[0]
+
     def operations(self, statuses=None):
         with self.connect() as db:
             if statuses:

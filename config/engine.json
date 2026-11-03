@@ -1,0 +1,19 @@
+[
+  {
+    "enabled": true,
+    "instance": "engine",
+    "tv_symbol": "OANDA:EURUSD",
+    "timeframe": "15",
+    "sensitivity": 6.4,
+    "atr_length": 2,
+    "risk_atr_length": 14,
+    "stop_mode": "ATR",
+    "stop_atr": 2,
+    "target_mode": "Risk : Reward",
+    "reward_ratio": 1.5,
+    "direction": "Long + Short",
+    "opposite_mode": "Close only",
+    "risk_percent": 0.5,
+    "history_bars": 1000
+  }
+]
