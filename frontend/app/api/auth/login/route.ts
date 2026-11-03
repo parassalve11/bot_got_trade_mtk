@@ -15,7 +15,8 @@ export async function POST(request: NextRequest) {
   // The MT5 password is forwarded to the bot once and never stored by the dashboard.
   const res = await backendFetch("/login", {
     method: "POST",
-    body: { login, password: body.password, server: body.server },
+    // Copy/paste often adds spaces around the password; MT5 passwords never start or end with one.
+    body: { login, password: body.password.trim(), server: body.server.trim() },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
