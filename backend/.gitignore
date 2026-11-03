@@ -1,0 +1,26 @@
+.env
+.env.*
+!.env.example
+.venv/
+.tooling/
+tools/*.exe
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.egg-info/
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+dist/
+build/
+.coverage
+htmlcov/
+
+# Local screenshots/reference material (may contain credentials)
+ref/
+
+# Research outputs (large, regenerate with research/*.py)
+research/data/
+research/results.json

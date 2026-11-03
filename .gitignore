@@ -1,26 +1,18 @@
+# Secrets (never commit)
 .env
 .env.*
 !.env.example
-.venv/
-.tooling/
-tools/*.exe
-__pycache__/
-.pytest_cache/
-.ruff_cache/
-*.pyc
-*.egg-info/
-data/*
-!data/.gitkeep
-logs/*
-!logs/.gitkeep
-dist/
-build/
-.coverage
-htmlcov/
 
-# Local screenshots/reference material (may contain credentials)
-ref/
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+*.tsbuildinfo
+next-env.d.ts
 
-# Research outputs (large, regenerate with research/*.py)
-research/data/
-research/results.json
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
