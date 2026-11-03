@@ -1,6 +1,6 @@
 //@version=6
 //@strategy_alert_message {"context":{{strategy.order.alert_message}},"fill_price":{{strategy.order.price}},"action":"{{strategy.order.action}}","contracts":{{strategy.order.contracts}},"position":"{{strategy.market_position}}","position_size":{{strategy.market_position_size}},"previous_position":"{{strategy.prev_market_position}}","sent_at":"{{timenow}}"}
-strategy("BYTEFX UT Multi-Asset v1.2", shorttitle = "BYTEFX UT", overlay = true, pyramiding = 0,
+strategy("BYTEFX UT Multi-Asset v1.3", shorttitle = "BYTEFX UT", overlay = true, pyramiding = 0,
      initial_capital = 10000, currency = currency.USD,
      default_qty_type = strategy.fixed, default_qty_value = 1,
      commission_type = strategy.commission.percent, commission_value = 0.05,
@@ -10,7 +10,8 @@ strategy("BYTEFX UT Multi-Asset v1.2", shorttitle = "BYTEFX UT", overlay = true,
      max_labels_count = 500)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BYTEFX UT Multi-Asset v1.2
+// BYTEFX UT Multi-Asset v1.3
+// v1.3: "Asset preset" input with walk-forward-tuned Gold 1H and Silver 30m settings.
 // v1.2 changes (logic):
 //   • Dashboard status no longer hard-codes "CLOSE ONLY"; it shows the real opposite-signal mode.
 //   • Daily reset is safe on D/W/M charts (timeframe.change("1D") is not called there).
@@ -24,11 +25,15 @@ strategy("BYTEFX UT Multi-Asset v1.2", shorttitle = "BYTEFX UT", overlay = true,
 // ─────────────────────────────────────────────────────────────────────────────
 
 string G_UT = "01 | UT signal engine"
-float sensitivity = input.float(6.4, "Sensitivity", minval = 0.1, step = 0.1, group = G_UT)
-int atrLength = input.int(2, "UT ATR period", minval = 1, group = G_UT)
+const string P_MANUAL = "Manual (use inputs below)"
+const string P_GOLD = "Gold 1H (XAUUSD, tuned 2026)"
+const string P_SILVER = "Silver 30m (XAGUSD, tuned 2026)"
+string assetPreset = input.string(P_MANUAL, "Asset preset", options = [P_MANUAL, P_GOLD, P_SILVER], group = G_UT, tooltip = "Presets override sensitivity, UT ATR period, stop, target and opposite-signal inputs with values chosen by a walk-forward test on 1 year of MT5 data (Nov 2025 - Nov 2026). Past results do not guarantee future results.")
+float sensitivityInput = input.float(6.4, "Sensitivity", minval = 0.1, step = 0.1, group = G_UT)
+int atrLengthInput = input.int(2, "UT ATR period", minval = 1, group = G_UT)
 bool useHA = input.bool(false, "Use Heikin Ashi signal close", group = G_UT)
 string direction = input.string("Long + Short", "Trade direction", options = ["Long + Short", "Long only", "Short only"], group = G_UT)
-string oppositeMode = input.string("Close only", "Opposite UT signal", options = ["Close + reverse", "Close only", "Ignore"], group = G_UT)
+string oppositeModeInput = input.string("Close only", "Opposite UT signal", options = ["Close + reverse", "Close only", "Ignore"], group = G_UT)
 
 string G_RISK = "02 | Position sizing"
 float riskPercent = input.float(0.5, "Equity risk per trade (%)", minval = 0.01, maxval = 10, step = 0.1, group = G_RISK)
@@ -39,13 +44,13 @@ int maxDailyEntries = input.int(0, "Maximum entries per exchange day (0 = off)",
 float dailyLossPercent = input.float(0, "Daily equity loss pause (%) (0 = off)", minval = 0, maxval = 50, group = G_RISK, tooltip = "Checked at candle close against previous day's last equity. Closes the position and pauses until the next exchange day. On D/W/M charts every bar counts as a new period. Not a guaranteed loss cap.")
 
 string G_EXIT = "03 | Stop loss and take profit"
-string stopMode = input.string("ATR", "Initial stop method", options = ["ATR", "UT distance", "Fixed %", "Price distance"], group = G_EXIT)
+string stopModeInput = input.string("ATR", "Initial stop method", options = ["ATR", "UT distance", "Fixed %", "Price distance"], group = G_EXIT)
 int riskAtrLength = input.int(14, "Risk ATR period", minval = 1, group = G_EXIT)
-float stopAtr = input.float(2, "Stop ATR multiplier", minval = 0.1, step = 0.1, group = G_EXIT)
+float stopAtrInput = input.float(2, "Stop ATR multiplier", minval = 0.1, step = 0.1, group = G_EXIT)
 float stopPercent = input.float(1, "Stop distance (%)", minval = 0.01, group = G_EXIT)
 float stopPrice = input.float(10, "Stop price distance", minval = 0.00000001, group = G_EXIT)
-string targetMode = input.string("Risk : Reward", "Take-profit method", options = ["Risk : Reward", "ATR", "Fixed %", "Off"], group = G_EXIT)
-float rewardRatio = input.float(1.5, "Reward / risk", minval = 0.1, step = 0.1, group = G_EXIT)
+string targetModeInput = input.string("Risk : Reward", "Take-profit method", options = ["Risk : Reward", "ATR", "Fixed %", "Off"], group = G_EXIT)
+float rewardRatioInput = input.float(1.5, "Reward / risk", minval = 0.1, step = 0.1, group = G_EXIT)
 float targetAtr = input.float(3, "Target ATR multiplier", minval = 0.1, step = 0.1, group = G_EXIT)
 float targetPercent = input.float(1.5, "Target distance (%)", minval = 0.01, group = G_EXIT)
 bool trailUT = input.bool(false, "Tighten stop with UT line at candle close", group = G_EXIT)
@@ -80,6 +85,18 @@ bool showRaw = input.bool(false, "Show raw UT crosses", group = G_VIEW)
 string G_ALERT = "07 | Alerts and execution"
 string instanceTag = input.string("main", "Alert instance tag", group = G_ALERT, tooltip = "Use a distinct tag for each live alert/settings combination. Never put credentials here.")
 bool brokerExecution = input.bool(false, "MT5 execution contract (broker owns fixed SL/TP)", group = G_ALERT, tooltip = "Enable only for the BYTEFX webhook executor. UT trailing must be OFF. Python sizes broker lots from actual MT5 equity; TradingView quantity is for simulation only.")
+
+// ── Asset presets (walk-forward selected; see docs/METALS_OPTIMIZATION.md) ──
+bool presetGold = assetPreset == P_GOLD
+bool presetSilver = assetPreset == P_SILVER
+bool usePreset = presetGold or presetSilver
+float sensitivity = presetGold ? 2.0 : presetSilver ? 4.0 : sensitivityInput
+int atrLength = presetGold ? 1 : presetSilver ? 10 : atrLengthInput
+string stopMode = usePreset ? "ATR" : stopModeInput
+float stopAtr = usePreset ? 3.0 : stopAtrInput
+string targetMode = usePreset ? "Risk : Reward" : targetModeInput
+float rewardRatio = usePreset ? 3.0 : rewardRatioInput
+string oppositeMode = usePreset ? "Close only" : oppositeModeInput
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 bool isDark = theme == "Dark"
@@ -173,6 +190,10 @@ f_tfLabel(string tf) =>
 
 // ── Validation ───────────────────────────────────────────────────────────────
 if barstate.isfirst
+    if presetGold and timeframe.period != "60"
+        runtime.error("The Gold preset was tuned on 1-hour (60) candles. Switch the chart to 1H or choose Manual.")
+    if presetSilver and timeframe.period != "30"
+        runtime.error("The Silver preset was tuned on 30-minute candles. Switch the chart to 30m or choose Manual.")
     if brokerExecution and trailUT
         runtime.error("MT5 execution uses broker-owned fixed SL/TP. Disable UT trailing; this contract does not send stop updates.")
     if not chart.is_standard
@@ -436,7 +457,7 @@ if showPanel and barstate.islast
     f_row(panel, 14, "Risk per trade", str.tostring(riskPercent, "#.##") + "%", C_TEXT)
     f_row(panel, 15, "Entries today", str.tostring(dailyEntries) + (maxDailyEntries > 0 ? " / " + str.tostring(maxDailyEntries) : ""), C_TEXT)
     f_row(panel, 16, "Sensitivity  |  Period", str.tostring(sensitivity) + "  |  " + str.tostring(atrLength), C_TEXT)
-    f_row(panel, 17, "Opposite signal", str.upper(oppositeMode), C_TEXT)
+    f_row(panel, 17, "Opposite signal", str.upper(oppositeMode) + (usePreset ? "  (preset)" : ""), C_TEXT)
     f_row(panel, 18, "Execution", brokerExecution ? "MT5 BROKER SL/TP" : "PINE SIMULATION", brokerExecution ? C_WARN : C_TEXT)
     float winRate = strategy.closedtrades > 0 ? float(strategy.wintrades) / strategy.closedtrades * 100 : na
     float profitFactor = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : na

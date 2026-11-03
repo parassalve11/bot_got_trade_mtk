@@ -72,7 +72,7 @@ class SignalEngine:
         action = decide(signal, position["side"] if position else None, stream)
         if action:
             alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
-            self.emit(alert, rule, now)
+            self.emit(alert, rule, now, watch_only=stream.watch_only)
         self.db.set_state(key, last["time"])
 
     def journal_position(self, stream):
@@ -136,7 +136,7 @@ class SignalEngine:
             )
         )
 
-    def emit(self, alert, rule, now):
+    def emit(self, alert, rule, now, *, watch_only=False):
         sig = alert.context
         details = {
             "event_id": sig.event_id,
@@ -149,7 +149,7 @@ class SignalEngine:
             "stop_ticks": sig.stop_ticks,
             "target_ticks": sig.target_ticks,
         }
-        if self.mode != "trade":
+        if self.mode != "trade" or watch_only:
             self.db.audit("engine_signal_watch_only", details, now)
             log.info("engine_signal_watch_only", extra={"event_id": sig.event_id, "status": sig.event})
             return

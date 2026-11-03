@@ -40,6 +40,8 @@ class StreamConfig(BaseModel):
     opposite_mode: Literal["Close + reverse", "Close only", "Ignore"] = "Close only"
     risk_percent: float = Field(default=0.5, gt=0, le=100)
     history_bars: int = Field(default=1000, ge=200, le=5000)
+    # Record signals only, even when ENGINE_MODE=trade (for streams still being evaluated).
+    watch_only: bool = False
 
     @property
     def seconds(self) -> int:

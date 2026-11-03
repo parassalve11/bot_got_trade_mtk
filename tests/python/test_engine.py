@@ -162,3 +162,26 @@ def test_webhook_cannot_inject_engine_signals(env):
             "/api/v1/webhooks/tradingview/" + env.settings.webhook_token.get_secret_value(), json=body
         )
     assert response.status_code == 403
+
+
+def test_watch_only_stream_never_trades_even_in_trade_mode(env):
+    last_open = align(env)
+    env.broker.bars["EURUSD"] = downtrend_then_jump(last_open)
+    runner = SignalEngine(env.settings, env.db, env.broker, env.mapper, mode="trade",
+                          streams=[stream(watch_only=True)])
+    runner.poll(env.clock())
+    assert env.db.status()["recent_events"] == []
+    with env.db.connect() as db:
+        assert db.execute("SELECT count(*) FROM audit WHERE action='engine_signal_watch_only'").fetchone()[0] == 1
+
+
+def test_repository_engine_config_is_valid():
+    from pathlib import Path
+
+    from app.signals.ut_engine import load_streams
+    from app.trading.symbol_mapper import SymbolMapper
+
+    root = Path(__file__).parents[2]
+    mapper = SymbolMapper(root / "config" / "symbols.json")
+    for item in load_streams(root / "config" / "engine.json"):
+        assert item.tv_symbol in mapper.rules

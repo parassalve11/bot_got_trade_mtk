@@ -20,3 +20,7 @@ htmlcov/
 
 # Local screenshots/reference material (may contain credentials)
 ref/
+
+# Research outputs (large, regenerate with research/*.py)
+research/data/
+research/results.json

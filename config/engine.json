@@ -15,5 +15,41 @@
     "opposite_mode": "Close only",
     "risk_percent": 0.5,
     "history_bars": 1000
+  },
+  {
+    "enabled": true,
+    "watch_only": true,
+    "instance": "gold1h",
+    "tv_symbol": "OANDA:XAUUSD",
+    "timeframe": "60",
+    "sensitivity": 2.0,
+    "atr_length": 1,
+    "risk_atr_length": 14,
+    "stop_mode": "ATR",
+    "stop_atr": 3.0,
+    "target_mode": "Risk : Reward",
+    "reward_ratio": 3.0,
+    "direction": "Long + Short",
+    "opposite_mode": "Close only",
+    "risk_percent": 0.5,
+    "history_bars": 1000
+  },
+  {
+    "enabled": true,
+    "watch_only": true,
+    "instance": "silver30",
+    "tv_symbol": "OANDA:XAGUSD",
+    "timeframe": "30",
+    "sensitivity": 4.0,
+    "atr_length": 10,
+    "risk_atr_length": 14,
+    "stop_mode": "ATR",
+    "stop_atr": 3.0,
+    "target_mode": "Risk : Reward",
+    "reward_ratio": 3.0,
+    "direction": "Long + Short",
+    "opposite_mode": "Close only",
+    "risk_percent": 0.5,
+    "history_bars": 1000
   }
 ]
