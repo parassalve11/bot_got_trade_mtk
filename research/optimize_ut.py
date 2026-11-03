@@ -34,7 +34,9 @@ GRID = dict(
     session=["all", "07-20"],
 )
 TFS = ["15", "30", "60"]
-TF_SECONDS = {"15": 900, "30": 1800, "60": 3600}
+TF_SECONDS = {"15": 900, "30": 1800, "60": 3600, "240": 14400}
+# Optional extra args select runs, e.g. XAUUSD:240 (default: both metals x TFS).
+RUNS = [tuple(a.split(":")) for a in sys.argv[3:]] or [(s, tf) for s in ("XAUUSD", "XAGUSD") for tf in TFS]
 
 
 def load(sym, tf):
@@ -146,8 +148,8 @@ def worse(a, b):
 
 if __name__ == "__main__":
     results = []
-    for sym in ("XAUUSD", "XAGUSD"):
-        for tf in TFS:
+    for sym, tf in RUNS:
+        if True:
             b = load(sym, tf)
             tick = float(b["tick"])
             hours = ((b["time"] + TF_SECONDS[tf]) % 86400) / 3600  # candle close hour UTC

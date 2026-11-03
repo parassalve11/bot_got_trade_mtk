@@ -9,7 +9,7 @@ Usage: analyze_ut.py RESULTS_JSON
 import json
 import sys
 
-MIN_TRAIN = {"15": 120, "30": 60, "60": 30}
+MIN_TRAIN = {"15": 120, "30": 60, "60": 30, "240": 15}
 MIN_MONTHS_POS = 0.6
 results = json.load(open(sys.argv[1]))
 

@@ -27,7 +27,8 @@ try:
     for symbol in symbols:
         mt5.symbol_select(symbol, True)
         info = mt5.symbol_info(symbol)
-        for tf, name in (("15", "TIMEFRAME_M15"), ("30", "TIMEFRAME_M30"), ("60", "TIMEFRAME_H1")):
+        for tf, name in (("15", "TIMEFRAME_M15"), ("30", "TIMEFRAME_M30"), ("60", "TIMEFRAME_H1"),
+                         ("240", "TIMEFRAME_H4")):
             rates = mt5.copy_rates_range(symbol, getattr(mt5, name), start, end)
             if rates is None or not len(rates):
                 raise SystemExit(f"No {symbol} {tf}m history: {mt5.last_error()}")
