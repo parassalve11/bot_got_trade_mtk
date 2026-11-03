@@ -63,6 +63,7 @@ class Worker:
                 and self.settings.trading_enabled
                 and not daily["paused"]
                 and not self.db.get_state("operator_pause", False)
+                and self.db.get_state("bot_running", True)
                 and not self.db.get_state("safety_hold")
             )
             self.heartbeat(True, ready, None if ready else "entries_paused_or_review_required")
@@ -186,7 +187,7 @@ class Worker:
     def tick(self):
         self.maintain()
         # Only generate signals from a connected, reconciled terminal.
-        if self.engine and self.reconciled:
+        if self.engine and self.reconciled and self.db.get_state("bot_running", True):
             self.engine.poll(self.clock())
         return self.process_one()
 

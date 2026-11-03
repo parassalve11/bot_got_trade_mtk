@@ -28,6 +28,21 @@ def set_paused(db, paused: bool, note: str, actor: str = "cli"):
     db.audit("operator_pause" if paused else "operator_resume", {"note": note, "by": actor})
 
 
+def bot_running(db) -> bool:
+    """Master Start/Stop switch. Missing state = running (keeps older installs unchanged)."""
+    return bool(db.get_state("bot_running", True))
+
+
+def set_bot_running(db, running: bool, actor: str = "cli", note: str = ""):
+    if running:
+        if db.operations(["UNKNOWN", "SENDING"]):
+            raise ValueError("Uncertain operations must be reconciled before starting")
+        if db.get_state("safety_hold"):
+            raise ValueError("Resolve and acknowledge the safety hold before starting")
+    db.set_state("bot_running", running)
+    db.audit("bot_started" if running else "bot_stopped", {"by": actor, "note": note or None})
+
+
 def acknowledge_hold(db, settings, note: str, actor: str = "cli"):
     note = require_note(note)
     if db.operations(["UNKNOWN", "SENDING"]):

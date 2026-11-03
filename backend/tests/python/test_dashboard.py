@@ -117,3 +117,31 @@ def test_strategy_mode_override(dash, env):
     # Trade needs an enabled symbol mapping: GBPUSD is enabled in the test mapping, unknown symbols are not.
     bad = {**body, "instance": "nope", "mode": "trade"}
     assert call(dash, "POST", "/strategies/mode", admin, json=bad).status_code == 404
+
+
+def test_start_stop_switch(dash, env):
+    admin = login(dash, MASTER).json()["token"]
+    assert call(dash, "POST", "/bot/stop", admin).json()["bot_running"] is False
+    assert call(dash, "GET", "/overview", admin).json()["entries"]["bot_running"] is False
+    env.enqueue()
+    env.worker.tick()
+    assert env.db.status()["recent_events"][0]["error"] == "bot_stopped"  # no new entry while stopped
+    assert not env.broker.sent
+    env.worker.maintain()
+    assert env.db.get_state("worker")["ready"] is False
+    assert call(dash, "POST", "/bot/start", admin).json()["bot_running"] is True
+    env.enqueue(trade_id="trade-after-start")
+    env.worker.tick()
+    assert env.broker.live  # trades again after Start
+    assert call(dash, "POST", "/bot/start").status_code == 401  # needs a session
+
+
+def test_engine_does_not_poll_while_stopped(env):
+    env.db.set_state("bot_running", False)
+    calls = []
+    env.worker.engine = type("E", (), {"poll": lambda self, now: calls.append(now)})()
+    env.worker.tick()
+    assert calls == []
+    env.db.set_state("bot_running", True)
+    env.worker.tick()
+    assert len(calls) == 1

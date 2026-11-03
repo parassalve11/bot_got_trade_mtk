@@ -7,6 +7,7 @@ import { Activity, BarChart3, Gauge, LogOut, Radio, ScrollText, Settings2, Zap }
 import { usePoll } from "@/lib/api";
 import type { Overview } from "@/lib/types";
 import { Badge, Dot } from "@/components/ui";
+import { BotSwitch } from "@/components/bot-switch";
 
 const NAV = [
   { href: "/", label: "Overview", icon: Gauge },
@@ -29,7 +30,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const hold = o?.entries.safety_hold;
   const entriesState = !o
     ? null
-    : hold
+    : !o.entries.bot_running
+      ? { tone: "gray" as const, text: "BOT STOPPED" }
+      : hold
       ? { tone: "red" as const, text: "SAFETY HOLD" }
       : o.entries.paused || o.daily.paused_by_loss || !o.entries.trading_enabled
         ? { tone: "amber" as const, text: "ENTRIES PAUSED" }
@@ -63,6 +66,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 );
               })}
             </nav>
+            <BotSwitch running={o?.entries.bot_running} onChanged={overview.refresh} />
             <button onClick={logout} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" title="Sign out">
               <LogOut size={18} />
             </button>

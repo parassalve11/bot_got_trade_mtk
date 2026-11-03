@@ -7,6 +7,7 @@ import { dateTime, humanize } from "@/lib/format";
 import type { Overview, RiskConfig } from "@/lib/types";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge, Button, Card, ErrorBanner, Table, Td } from "@/components/ui";
+import { BotSwitch } from "@/components/bot-switch";
 
 type Action = "pause" | "resume" | "acknowledge-hold" | "close-all";
 
@@ -56,6 +57,21 @@ export default function ControlsPage() {
       </div>
       <ErrorBanner message={overview.error} />
       {message && <p className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</p>}
+
+      <Card title="Bot">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-slate-600">
+              Status:{" "}
+              {o ? (o.entries.bot_running ? <Badge tone="green">RUNNING</Badge> : <Badge>STOPPED</Badge>) : "—"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Stopped: no new signals or trades. MT5 stays connected and open trades stay protected.
+            </p>
+          </div>
+          <BotSwitch running={o?.entries.bot_running} onChanged={overview.refresh} size="lg" />
+        </div>
+      </Card>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card title="New entries">

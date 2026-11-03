@@ -104,6 +104,8 @@ class RiskManager:
     def entry_guard(self, account, now):
         if not self.settings.trading_enabled or self.db.get_state("operator_pause", False):
             raise Reject("entries_paused")
+        if not self.db.get_state("bot_running", True):
+            raise Reject("bot_stopped")
         if self.db.get_state("safety_hold") or self.db.operations(["UNKNOWN", "SENDING"]):
             raise Reject("safety_review_required")
         if not account.trade_allowed:

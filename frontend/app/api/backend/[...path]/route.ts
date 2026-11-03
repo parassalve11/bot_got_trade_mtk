@@ -10,6 +10,8 @@ const POST_PATHS = new Set([
   "positions/close",
   "positions/close-all",
   "strategies/mode",
+  "bot/start",
+  "bot/stop",
 ]);
 
 async function forward(request: NextRequest, path: string[], method: "GET" | "POST") {

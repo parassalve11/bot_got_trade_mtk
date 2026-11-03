@@ -68,6 +68,7 @@ export type Overview = {
     engine_mode: string;
   };
   entries: {
+    bot_running: boolean;
     paused: boolean;
     safety_hold: { reason: string; at: number } | null;
     trading_enabled: boolean;

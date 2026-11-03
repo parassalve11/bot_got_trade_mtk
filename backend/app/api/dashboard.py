@@ -211,7 +211,8 @@ def overview(request: Request):
         "health": {"api": True, "worker": fresh, "mt5": bool(fresh and beat.get("connected")),
                    "ready": bool(fresh and beat.get("ready")), "reason": beat.get("reason"),
                    "trading_mode": settings.trading_mode, "engine_mode": settings.engine_mode},
-        "entries": {"paused": bool(db.get_state("operator_pause", False)), "safety_hold": db.get_state("safety_hold"),
+        "entries": {"bot_running": control.bot_running(db),
+                    "paused": bool(db.get_state("operator_pause", False)), "safety_hold": db.get_state("safety_hold"),
                     "trading_enabled": settings.trading_enabled, "uncertain_operations": status["uncertain_operations"]},
         "account": {"login": "***" + str(settings.mt5_login)[-3:], "server": settings.mt5_server,
                     "currency": snapshot.get("currency", "USD"), "balance": snapshot.get("balance"),
@@ -302,6 +303,13 @@ def _apply(fn):
         return fn()
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/bot/{action}", dependencies=[Depends(proxy_guard), Depends(admin)])
+def bot_switch(action: Literal["start", "stop"], request: Request):
+    db = request.app.state.db
+    _apply(lambda: control.set_bot_running(db, action == "start", ACTOR))
+    return {"ok": True, "bot_running": control.bot_running(db)}
 
 
 @router.post("/control/{action}", dependencies=[Depends(proxy_guard), Depends(admin)])

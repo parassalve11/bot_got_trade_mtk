@@ -211,6 +211,8 @@ def parser():
     )
     scan.add_argument("--bars", type=int, default=2000)
     commands.add_parser("status", help="Read protected local operational state")
+    commands.add_parser("start", help="Start the bot (signals + new entries)")
+    commands.add_parser("stop", help="Stop new signals/entries; open trades stay protected")
     for name in ("pause", "resume", "acknowledge-hold"):
         sub = commands.add_parser(name)
         sub.add_argument("--note", required=True)
@@ -297,6 +299,11 @@ def main(argv=None):
                     indent=2,
                 )
             )
+        elif args.command in ("start", "stop"):
+            from app import control
+
+            control.set_bot_running(db, args.command == "start")
+            print("Bot " + ("started." if args.command == "start" else "stopped. Open trades keep their broker SL/TP."))
         elif args.command == "backup":
             db.backup(args.destination)
             print("Consistent SQLite backup created.")
