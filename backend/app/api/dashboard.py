@@ -2,10 +2,10 @@
 
 Security layers, in order:
 1. X-Dash-Proxy-Secret: only the Vercel server knows it; without it every route is 404.
-2. MT5 login: account number + server must match .env; master password -> admin,
-   investor (read-only) password -> viewer. Global lockout after repeated failures.
+2. MT5 login: account number, server and master password must match .env (one role, full
+   access). Global lockout after repeated failures.
 3. Opaque session token (only its SHA-256 is stored), expiring after DASH_SESSION_HOURS.
-4. Admin role required for every state-changing action, each with an audit note.
+4. Every state-changing action requires an audit note.
 The API never calls MT5; the worker publishes snapshots and executes close requests.
 """
 
@@ -25,7 +25,7 @@ from app.signals.ut_engine import load_streams
 
 router = APIRouter(prefix="/api/v1/dash")
 LOCKOUT_FAILURES, LOCKOUT_SECONDS = 5, 900
-ACTOR = "dashboard:admin"
+ACTOR = "dashboard"
 
 
 # ---------------------------------------------------------------- security
@@ -51,10 +51,7 @@ def session(request: Request) -> dict:
     return found
 
 
-def admin(current: dict = Depends(session)) -> dict:
-    if current["role"] != "admin":
-        raise HTTPException(403, "admin_only")
-    return current
+admin = session  # Single role: every signed-in session has full access.
 
 
 class LoginBody(BaseModel):
@@ -92,9 +89,7 @@ def login(body: LoginBody, request: Request):
     if len(failures) >= LOCKOUT_FAILURES:
         raise HTTPException(429, "too_many_attempts_try_again_later")
     account_ok = body.login == settings.mt5_login and body.server.strip() == settings.mt5_server
-    is_master = _matches(body.password, settings.mt5_password)
-    is_investor = _matches(body.password, settings.mt5_investor_password)
-    role = "admin" if account_ok and is_master else "viewer" if account_ok and is_investor else None
+    role = "admin" if _matches(body.password, settings.mt5_password) and account_ok else None
     if role is None:
         db.set_state("dash_login_failures", failures + [now])
         db.audit("dashboard_login_failed", {"login_matches": account_ok}, now)

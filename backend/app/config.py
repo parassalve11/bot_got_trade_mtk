@@ -54,8 +54,7 @@ class Settings(BaseSettings):
     engine_mode: Literal["off", "watch", "trade"] = "off"
     engine_config_path: Path = Path("config/engine.json")
     # Dashboard (Next.js on Vercel). Disabled until DASH_PROXY_SECRET is set.
-    # Master password (MT5_PASSWORD) = admin; investor (read-only) password = viewer (optional).
-    mt5_investor_password: SecretStr = SecretStr("")
+    # Sign-in uses MT5_LOGIN + MT5_SERVER + MT5_PASSWORD (one role: full access).
     dash_proxy_secret: SecretStr = SecretStr("")
     dash_session_hours: int = Field(default=12, ge=1, le=168)
 

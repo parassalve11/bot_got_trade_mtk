@@ -7,7 +7,6 @@ from app.signals.ut_engine import StreamConfig
 
 PROXY = "p" * 40
 MASTER = "Master-Pass-123"
-INVESTOR = "Investor-Pass-456"
 
 
 @pytest.fixture
@@ -17,7 +16,7 @@ def dash(env, tmp_path):
                       ' {"instance": "g", "tv_symbol": "OANDA:GBPUSD", "watch_only": true}]')
     env.settings = env.settings.model_copy(update=dict(
         dash_proxy_secret=SecretStr(PROXY), mt5_password=SecretStr(MASTER),
-        mt5_investor_password=SecretStr(INVESTOR), engine_mode="watch", engine_config_path=engine,
+        engine_mode="watch", engine_config_path=engine,
     ))
     env.worker.settings = env.settings
     with TestClient(create_app(env.settings), client=("127.0.0.1", 1234)) as client:
@@ -47,13 +46,12 @@ def test_dashboard_disabled_without_proxy_secret(env):
         assert login(client, "x").status_code == 404
 
 
-def test_master_is_admin_investor_is_viewer_and_logout_revokes(dash):
-    admin = login(dash, MASTER).json()
-    viewer = login(dash, INVESTOR).json()
-    assert admin["role"] == "admin" and viewer["role"] == "viewer"
-    assert call(dash, "GET", "/me", viewer["token"]).json()["role"] == "viewer"
-    assert call(dash, "POST", "/logout", viewer["token"]).status_code == 200
-    assert call(dash, "GET", "/me", viewer["token"]).status_code == 401
+def test_master_password_signs_in_and_logout_revokes(dash):
+    session = login(dash, MASTER).json()
+    assert session["role"] == "admin"
+    assert call(dash, "GET", "/me", session["token"]).status_code == 200
+    assert call(dash, "POST", "/logout", session["token"]).status_code == 200
+    assert call(dash, "GET", "/me", session["token"]).status_code == 401
 
 
 @pytest.mark.parametrize("changes", [dict(password="wrong"), dict(login=999), dict(server="Other-Demo")])
@@ -68,11 +66,10 @@ def test_lockout_after_repeated_failures(dash):
     assert login(dash, MASTER).status_code == 429  # even the right password, until the window passes
 
 
-def test_viewer_cannot_control_admin_can(dash, env):
-    viewer = login(dash, INVESTOR).json()["token"]
+def test_controls_need_session_and_note(dash, env):
     admin = login(dash, MASTER).json()["token"]
     note = {"note": "testing pause control"}
-    assert call(dash, "POST", "/control/pause", viewer, json=note).status_code == 403
+    assert call(dash, "POST", "/control/pause", json=note).status_code == 401
     assert call(dash, "POST", "/control/pause", admin, json={"note": "short"}).status_code == 422
     assert call(dash, "POST", "/control/pause", admin, json=note).status_code == 200
     assert env.db.get_state("operator_pause") is True
@@ -82,7 +79,7 @@ def test_viewer_cannot_control_admin_can(dash, env):
 
 def test_overview_uses_worker_snapshot_and_hides_login(dash, env):
     env.worker.maintain()
-    token = login(dash, INVESTOR).json()["token"]
+    token = login(dash, MASTER).json()["token"]
     data = call(dash, "GET", "/overview", token).json()
     assert data["health"]["worker"] and data["health"]["mt5"]
     assert data["account"]["equity"] == 10000 and data["account"]["login"] == "***456"
