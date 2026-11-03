@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timezone
 
 from app.schemas import ENTRY_EVENTS, AlertEnvelope
-from app.signals.ut_engine import decide, load_streams, signal_series
+from app.signals.ut_engine import decide, htf_direction_at, htf_series, load_streams, signal_series
 from app.trading.errors import Reject, Retryable
 
 log = logging.getLogger(__name__)
@@ -69,7 +69,13 @@ class SignalEngine:
         symbol = self.broker.symbol(rule.broker_symbol)
         signal = signal_series(bars, stream, symbol.tick_size)[-1]
         position = self.journal_position(stream)
-        action = decide(signal, position["side"] if position else None, stream)
+        trend = None
+        if signal is not None and stream.htf_filter != "none":
+            htf = [b for b in self.broker.rates(rule.broker_symbol, stream.htf_filter, 500) if b["time"] + 14400 <= now]
+            if not htf:
+                raise Retryable("engine_htf_history_unavailable")
+            trend = htf_direction_at(htf_series(htf, stream), close_time)
+        action = decide(signal, position["side"] if position else None, stream, trend)
         if action:
             alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
             self.emit(alert, rule, now, watch_only=stream.watch_only)

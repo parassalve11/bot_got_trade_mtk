@@ -71,3 +71,33 @@ To let a metal trade after a few weeks of acceptable watch results:
 3. `.env`: `ENGINE_MODE=trade`, then restart the `BYTEFX-worker` task.
 
 Re-run the research every few months; markets change.
+
+## Gold 1H High-Win preset (v1.4): ≥ 60% win rate
+
+Goal: win rate ≥ 60% **and** still profitable on unseen data. Searched 7,200 gold settings
+(`research/optimize_winrate.py` / `analyze_winrate.py`): smaller targets (0.3–1.5×), wider stops,
+"Ignore" opposite signals, and trend filters (EMA 200, 4H UT agreement).
+
+| Gold 1H + 4H trend filter | Trades | Win rate | Net | PF | Max DD | Profitable months |
+|---|---|---|---|---|---|---|
+| Train (9 mo) | 51 | 72.5% | +13.6 R | 1.99 | 2.5 R | 89% |
+| **Test (3 mo, unseen)** | **17** | **64.7%** | **+2.5 R** | **1.44** | **2.2 R** | **100%** |
+
+Settings: sensitivity 3, UT ATR 2, stop 2× ATR(14), target 0.75× stop, opposite signal
+"Close only", entries only when the **previous completed 4H candle** is on the same side of its
+UT line (Pine's "Require higher-timeframe UT agreement"; same UT settings). The live engine
+reproduces the research exactly (17 trades, 64.7%, +2.49 R).
+
+Lessons from this search:
+
+- **The trap is real.** The highest-win-rate settings (90–100%) had 3–19 trades, and a 15m
+  setting with 73% on test had only 5 of 81 neighbours profitable: luck, rejected.
+- **The trend filter is what helps.** Of the top 20 ≥60% settings per filter, 12 (4H UT) vs 8
+  (EMA 200) vs 4 (none) stayed profitable on test.
+- **Timing must match Pine exactly.** Research first used a 4H candle closing at the same
+  moment; Pine uses the previous one. Re-run with Pine's rule: this preset was unchanged.
+- **Weakness: few trades** (~6 a month) and the target is smaller than the stop (a loss ≈ 1.33
+  wins), so a run of losses hurts. Watch it before trading.
+
+Use: Pine Inputs → *Asset preset* → "Gold 1H High-Win + 4H trend" on a 1-hour XAUUSD chart.
+Engine stream `gold1h_hw` (`"htf_filter": "240"`, watch-only).

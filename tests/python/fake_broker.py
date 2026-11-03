@@ -68,7 +68,7 @@ class FakeBroker:
         return volume * 1000
 
     def rates(self, name, timeframe, count):
-        values = self.bars.get(name, [])[-count:]
+        values = self.bars.get((name, timeframe), self.bars.get(name, []))[-count:]
         if not values:
             raise Retryable("rates_unavailable")
         return [dict(v) for v in values]

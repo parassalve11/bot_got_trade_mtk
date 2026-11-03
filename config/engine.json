@@ -51,5 +51,24 @@
     "opposite_mode": "Close only",
     "risk_percent": 0.5,
     "history_bars": 1000
+  },
+  {
+    "enabled": true,
+    "watch_only": true,
+    "instance": "gold1h_hw",
+    "tv_symbol": "OANDA:XAUUSD",
+    "timeframe": "60",
+    "sensitivity": 3.0,
+    "atr_length": 2,
+    "risk_atr_length": 14,
+    "stop_mode": "ATR",
+    "stop_atr": 2.0,
+    "target_mode": "Risk : Reward",
+    "reward_ratio": 0.75,
+    "direction": "Long + Short",
+    "opposite_mode": "Close only",
+    "htf_filter": "240",
+    "risk_percent": 0.5,
+    "history_bars": 1000
   }
 ]

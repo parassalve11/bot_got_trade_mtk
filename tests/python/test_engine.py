@@ -185,3 +185,43 @@ def test_repository_engine_config_is_valid():
     mapper = SymbolMapper(root / "config" / "symbols.json")
     for item in load_streams(root / "config" / "engine.json"):
         assert item.tv_symbol in mapper.rules
+
+
+def test_htf_direction_uses_previous_completed_candle_like_pine():
+    from app.signals.ut_engine import htf_direction_at
+
+    series = ([100.0, 200.0, 300.0], [1, -1, 1])
+    assert htf_direction_at(series, 150.0) == 1
+    assert htf_direction_at(series, 200.0) == 1  # 4H candle closing at the same moment is not used yet
+    assert htf_direction_at(series, 201.0) == -1
+    assert htf_direction_at(series, 50.0) == 0
+
+
+@pytest.mark.parametrize(
+    "side,position,trend,expected",
+    [("LONG", None, 1, "entry"), ("LONG", None, -1, None), ("LONG", None, 0, None),
+     ("SHORT", "LONG", 1, "close")],  # counter-trend opposite signal still closes
+)
+def test_htf_filter_gates_entries_not_closes(side, position, trend, expected):
+    assert decide(BarSignal(side, 1.1, 100, 75), position, stream(htf_filter="240"), trend) == expected
+
+
+def htf_trend_bars(last_chart_open, rising):
+    bars, price = [], 1.05 if rising else 1.15
+    start = last_chart_open - 200 * 14400
+    for k in range(200):
+        close = price + (0.0005 if rising else -0.0005)
+        bars.append(candle(start + k * 14400, price, close))
+        price = close
+    return bars
+
+
+@pytest.mark.parametrize("rising,expected", [(False, []), (True, [("entry", "QUEUED")])])
+def test_engine_htf_filter_blocks_counter_trend_entries(env, rising, expected):
+    last_open = align(env)
+    env.broker.bars[("EURUSD", "15")] = downtrend_then_jump(last_open)  # LONG signal on the chart
+    env.broker.bars[("EURUSD", "240")] = htf_trend_bars(last_open, rising)
+    env.worker.maintain()
+    SignalEngine(env.settings, env.db, env.broker, env.mapper, mode="trade",
+                 streams=[stream(htf_filter="240")]).poll(env.clock())
+    assert [(e["event_type"], e["status"]) for e in env.db.status()["recent_events"]] == expected

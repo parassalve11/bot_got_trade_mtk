@@ -100,6 +100,8 @@ def simulate(b, sig_idx, sig_side, risk_atr, tick, cost, stop_atr, rr, opp, sess
         if pos and pos["side"] == side:
             continue
         if pos:
+            if opp == "Ignore":
+                continue  # Keep the trade; only its broker SL/TP can close it.
             book(pos, b["open"][i + 1], "OPP")
             pos = None
             if opp != "Close + reverse":

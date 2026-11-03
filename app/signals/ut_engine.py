@@ -5,6 +5,7 @@ Pine `na` is represented by float NaN; Pine comparisons with na are false, which
 also how Python compares NaN, and Pine math.max/min with na return na (see _max/_min).
 """
 
+import bisect
 import json
 import math
 from dataclasses import dataclass
@@ -40,6 +41,9 @@ class StreamConfig(BaseModel):
     opposite_mode: Literal["Close + reverse", "Close only", "Ignore"] = "Close only"
     risk_percent: float = Field(default=0.5, gt=0, le=100)
     history_bars: int = Field(default=1000, ge=200, le=5000)
+    # Pine "Require higher-timeframe UT agreement": entries only with the previous COMPLETED
+    # 4H candle's close vs its UT line (same UT settings). Closes are never filtered.
+    htf_filter: Literal["none", "240"] = "none"
     # Record signals only, even when ENGINE_MODE=trade (for streams still being evaluated).
     watch_only: bool = False
 
@@ -164,13 +168,38 @@ def signal_series(bars: list[dict], cfg: StreamConfig, tick_size: float) -> list
     return result
 
 
-def decide(signal: BarSignal | None, position_side: str | None, cfg: StreamConfig) -> str | None:
-    """Pine order logic: returns entry, reverse, close or None."""
+def htf_series(htf_bars: list[dict], cfg: StreamConfig, htf_seconds: int = 14400):
+    """(close times, direction +1/-1/0) for each CLOSED higher-timeframe candle, oldest first."""
+    closes = [b["close"] for b in htf_bars]
+    stops = ut_stops(closes, atr([b["high"] for b in htf_bars], [b["low"] for b in htf_bars], closes,
+                                 cfg.atr_length), cfg.sensitivity)
+    directions = [0 if _na(s) else 1 if c > s else -1 if c < s else 0 for c, s in zip(closes, stops)]
+    return [b["time"] + htf_seconds for b in htf_bars], directions
+
+
+def htf_direction_at(series, chart_close_time: float) -> int:
+    """Pine request.security([close[1], line[1]], lookahead_on): the HTF candle BEFORE the one that
+    contains this chart candle. A 4H candle closing at the same moment is not used yet."""
+    close_times, directions = series
+    k = bisect.bisect_left(close_times, chart_close_time) - 1
+    return directions[k] if k >= 0 else 0
+
+
+def decide(
+    signal: BarSignal | None, position_side: str | None, cfg: StreamConfig, trend: int | None = None
+) -> str | None:
+    """Pine order logic: returns entry, reverse, close or None.
+
+    `trend` is the higher-timeframe direction (+1/-1/0) when cfg.htf_filter is on; it gates
+    entries only, exactly like Pine's buyQuality/sellQuality. Opposite signals still close.
+    """
     if signal is None:
         return None
     allowed = cfg.direction == "Long + Short" or (
         cfg.direction == "Long only" if signal.side == "LONG" else cfg.direction == "Short only"
     )
+    if cfg.htf_filter != "none":
+        allowed = allowed and trend == (1 if signal.side == "LONG" else -1)
     if position_side is None:
         return "entry" if allowed else None
     if position_side == signal.side:

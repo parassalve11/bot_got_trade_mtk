@@ -69,14 +69,15 @@ def mt5_preflight(settings, db, broker, mapper):
     }
 
 
-def simulate_history(bars, stream, tick_size):
+def simulate_history(bars, stream, tick_size, htf_bars=None):
     """Approximate Pine replay on closed MT5 candles: fills at next open, bracket SL/TP.
 
     Same signal maths as live trading. Fills/costs are simplified; for comparison only.
     """
-    from app.signals.ut_engine import decide, signal_series
+    from app.signals.ut_engine import decide, htf_direction_at, htf_series, signal_series
 
     signals = signal_series(bars, stream, tick_size)
+    series = htf_series(htf_bars, stream) if htf_bars else None
     trades, position = [], None
     for i, bar in enumerate(bars):
         if position and i >= position["fill_index"]:
@@ -91,7 +92,8 @@ def simulate_history(bars, stream, tick_size):
                 trades.append(position)
                 position = None
         signal = signals[i]
-        action = decide(signal, position["side"] if position else None, stream)
+        trend = htf_direction_at(series, bar["time"] + stream.seconds) if series else None
+        action = decide(signal, position["side"] if position else None, stream, trend)
         if not action or i + 1 >= len(bars):
             continue
         fill = bars[i + 1]["open"]
@@ -127,7 +129,11 @@ def engine_scan(settings, broker, mapper, bars_count):
         now = time.time()
         bars = [b for b in broker.rates(rule.broker_symbol, stream.timeframe, bars_count)
                 if b["time"] + stream.seconds <= now]
-        signals, trades, open_trade = simulate_history(bars, stream, symbol.tick_size)
+        htf_bars = None
+        if stream.htf_filter != "none":
+            htf_bars = [b for b in broker.rates(rule.broker_symbol, stream.htf_filter, max(500, bars_count // 4 + 100))
+                        if b["time"] + 14400 <= now]
+        signals, trades, open_trade = simulate_history(bars, stream, symbol.tick_size, htf_bars)
         warmup = min(len(bars), max(200, stream.risk_atr_length * 10))
         print()
         print(f"=== {stream.tv_symbol} -> {rule.broker_symbol}, {stream.timeframe}m, instance '{stream.instance}' ===")
