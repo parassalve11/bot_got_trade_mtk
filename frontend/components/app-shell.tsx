@@ -25,7 +25,7 @@ async function logout() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const overview = usePoll<Overview>("overview", 5_000);
+  const overview = usePoll<Overview>("overview", 15_000);
   const o = overview.data;
   const hold = o?.entries.safety_hold;
   const entriesState = !o

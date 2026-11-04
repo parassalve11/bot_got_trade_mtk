@@ -12,8 +12,8 @@ import { Card, ErrorBanner, Stat, SummaryTable } from "@/components/ui";
 type EquityPoint = { at: number; balance: number; equity: number };
 
 export default function OverviewPage() {
-  const { data: o, error, refresh } = usePoll<Overview>("overview", 5_000);
-  const equity = usePoll<{ points: EquityPoint[] }>("equity?days=30", 60_000);
+  const { data: o, error, refresh } = usePoll<Overview>("overview", 15_000);
+  const equity = usePoll<{ points: EquityPoint[] }>("equity?days=30", 300_000);
   const currency = o?.account.currency ?? "USD";
   const lossUsed = o ? Math.min(100, (o.daily.loss_used_percent / o.daily.loss_limit_percent) * 100) : 0;
 

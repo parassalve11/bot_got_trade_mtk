@@ -25,7 +25,7 @@ function summarize(rows: ClosedPosition[]): Summary {
 }
 
 export default function PositionsPage() {
-  const { data, error, refresh } = usePoll<Positions>("positions", 5_000);
+  const { data, error, refresh } = usePoll<Positions>("positions", 15_000);
   const [tab, setTab] = useState<"open" | "closed">("open");
   const [strategy, setStrategy] = useState("all");
   const closed = useMemo(() => data?.closed ?? [], [data]);

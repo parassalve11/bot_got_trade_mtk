@@ -21,7 +21,7 @@ export async function GET() {
   try {
     // With the right secret and no session the bot answers 401; a wrong secret gets 404.
     const res = await fetch(`${url}/api/v1/dash/me`, {
-      headers: { "x-dash-proxy-secret": secret },
+      headers: { "x-dash-proxy-secret": secret, "ngrok-skip-browser-warning": "1" },
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
     });

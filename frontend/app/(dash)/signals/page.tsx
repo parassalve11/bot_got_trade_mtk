@@ -14,7 +14,7 @@ const FILTERS = [
 ] as const;
 
 export default function SignalsPage() {
-  const { data, error } = usePoll<{ signals: Signal[] }>("signals?limit=300", 10_000);
+  const { data, error } = usePoll<{ signals: Signal[] }>("signals?limit=300", 30_000);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const signals = (data?.signals ?? []).filter((s) => filter === "all" || s.status === filter);
 

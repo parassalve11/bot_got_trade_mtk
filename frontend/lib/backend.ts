@@ -34,7 +34,7 @@ export async function backendFetch(
     console.error("[backend] BACKEND_URL or DASH_PROXY_SECRET missing/invalid; open /api/diagnostics");
     return Response.json({ detail: "dashboard_not_configured" }, { status: 500 });
   }
-  const headers: Record<string, string> = { "x-dash-proxy-secret": secret };
+  const headers: Record<string, string> = { "x-dash-proxy-secret": secret, "ngrok-skip-browser-warning": "1" };
   if (init.token) headers.authorization = `Bearer ${init.token}`;
   if (init.body !== undefined) headers["content-type"] = "application/json";
   try {

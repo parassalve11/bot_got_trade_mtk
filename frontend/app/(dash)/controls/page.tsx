@@ -42,8 +42,8 @@ const RISK_LABELS: Record<string, string> = {
 };
 
 export default function ControlsPage() {
-  const overview = usePoll<Overview>("overview", 5_000);
-  const config = usePoll<RiskConfig>("config", 60_000);
+  const overview = usePoll<Overview>("overview", 15_000);
+  const config = usePoll<RiskConfig>("config", 300_000);
   const [action, setAction] = useState<Action | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const o = overview.data;

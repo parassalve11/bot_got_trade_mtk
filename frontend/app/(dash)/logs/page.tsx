@@ -20,7 +20,7 @@ function details(d: Record<string, unknown>): string {
 }
 
 export default function LogsPage() {
-  const { data, error } = usePoll<{ audit: AuditRow[] }>("audit?limit=300", 15_000);
+  const { data, error } = usePoll<{ audit: AuditRow[] }>("audit?limit=300", 30_000);
   const rows = data?.audit ?? [];
   return (
     <div className="space-y-6">

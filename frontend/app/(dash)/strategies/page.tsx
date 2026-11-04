@@ -23,7 +23,7 @@ function Row({ label, value, tone = "" }: { label: string; value: string; tone?:
 }
 
 export default function StrategiesPage() {
-  const { data, error, refresh } = usePoll<{ engine_mode: string; strategies: Strategy[] }>("strategies", 15_000);
+  const { data, error, refresh } = usePoll<{ engine_mode: string; strategies: Strategy[] }>("strategies", 30_000);
   const [change, setChange] = useState<{ s: Strategy; mode: StrategyMode } | null>(null);
 
   return (
