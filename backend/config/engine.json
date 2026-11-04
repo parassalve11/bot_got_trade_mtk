@@ -31,7 +31,7 @@
     "reward_ratio": 3.0,
     "direction": "Long + Short",
     "opposite_mode": "Close only",
-    "risk_percent": 0.25,
+    "risk_percent": 0.5,
     "history_bars": 1000
   },
   {
@@ -87,7 +87,7 @@
     "direction": "Long + Short",
     "opposite_mode": "Close only",
     "htf_filter": "none",
-    "risk_percent": 0.25,
+    "risk_percent": 0.5,
     "history_bars": 1000
   },
   {
