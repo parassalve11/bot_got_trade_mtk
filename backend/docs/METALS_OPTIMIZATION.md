@@ -101,3 +101,20 @@ Lessons from this search:
 
 Use: Pine Inputs → *Asset preset* → "Gold 1H High-Win + 4H trend" on a 1-hour XAUUSD chart.
 Engine stream `gold1h_hw` (`"htf_filter": "240"`, watch-only).
+
+## Gold 1H split targets (live on demo from 4 Nov 2026)
+
+Each gold 1H signal (sensitivity 2, UT ATR 1, stop 3× ATR 14) opens **two half-size positions**
+(0.25% risk each, 0.5% per signal): `gold1h_st` takes profit at 0.3× the stop, `gold1h` at 3×.
+`config/symbols.json` sets `max_bot_positions: 2` for XAUUSD (hedging accounts only; each half is
+a different strategy instance; manual positions still block). The engine queues closes before entries.
+
+| Gold 1H split | Trades | Win rate | Net (0.5% per signal) | Worst DD |
+|---|---|---|---|---|
+| Unseen test, 3 Aug – 3 Nov 2026 | 128 | 57.8% | +$1,563 | −$1,443 |
+| Full year (first 9 months in-sample) | 510 | 56.9% | +$8,550 | −$2,485 |
+
+**Silver with the same settings loses** (full year −$1,176, last 3 months −$1,378; the 0.3× half
+wins 67% of trades yet loses money). Gold + silver together: +$7,374 but worst drawdown −$5,779.
+Silver 1H split streams (`silver1h_st`, `silver1h`) therefore run **watch-only** until silver-specific
+settings are found.

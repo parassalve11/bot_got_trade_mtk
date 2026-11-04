@@ -81,10 +81,9 @@ class Executor:
             raise Retryable("terminal_or_account_trading_disabled")
         if actual["action"] == DEAL and not actual.get("position"):
             self.risk.entry_guard(account, now)
-            if any(p.symbol == actual["symbol"] for p in self.broker.positions()) or any(
-                o["symbol"] == actual["symbol"] for o in self.broker.orders()
-            ):
-                raise Reject("symbol_changed_before_send")
+            meta = json.loads(operation["request_json"]).get("_meta", {})
+            rule = self.symbols.resolve(meta.get("tv_symbol", ""), require_enabled=False)
+            self.risk.symbol_slot(account, actual["symbol"], meta.get("instance"), rule, reason="symbol_changed_before_send")
         if actual.get("position"):
             match = next((p for p in self.broker.positions() if p.ticket == actual["position"]), None)
             if match is None:
@@ -327,11 +326,13 @@ class Executor:
                 raise Reject("reversal_previous_trade_mismatch")
         live_records = [p for p in self.db.open_positions() if p["symbol"] == rule.broker_symbol]
         if sig.event == "entry" and live_records:
-            current = live_records[0]
-            if len(live_records) == 1 and current["instance"] == sig.instance and current["side"] == sig.side:
+            mine = [p for p in live_records if p["instance"] == sig.instance]
+            if len(mine) == 1 and mine[0]["side"] == sig.side:
                 self.db.tombstone(sig, rule.broker_symbol, now, row["id"])
                 return "IGNORED", "same_side_position_no_pyramiding"
-            raise Reject("existing_position_conflicts_with_flat_entry")
+            if mine or len(live_records) >= rule.max_bot_positions:
+                raise Reject("existing_position_conflicts_with_flat_entry")
+            # Another strategy instance shares this symbol (split targets); symbol_slot rechecks MT5.
         replacing = previous["identifier"] if previous and previous["status"] == "OPEN" else None
         # Preflight first; a rejected reversal should not unnecessarily close a good position.
         plan = self.risk.plan(sig, rule, now, replacing_identifier=replacing)

@@ -17,11 +17,12 @@
   },
   "OANDA:XAUUSD": {
     "broker_symbol": "XAUUSD",
-    "enabled": false,
+    "enabled": true,
     "price_multiplier": 1.0,
     "max_spread_points": 50,
     "max_price_drift_percent": 0.3,
-    "max_lot": 0.5
+    "max_lot": 0.5,
+    "max_bot_positions": 2
   },
   "OANDA:XAGUSD": {
     "broker_symbol": "XAGUSD",

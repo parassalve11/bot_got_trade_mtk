@@ -24,6 +24,7 @@ class Account:
     trade_allowed: bool
     currency: str = "USD"
     balance: float = 0.0
+    margin_mode: int = 2  # 0 netting, 1 exchange, 2 hedging (ACCOUNT_MARGIN_MODE_*)
 
 
 @dataclass(frozen=True)

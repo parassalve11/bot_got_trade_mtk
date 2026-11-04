@@ -17,11 +17,11 @@
     "wins": 20,
     "losses": 31,
     "win_rate": 0.392,
-    "net": 1697,
-    "gross_profit": 9445,
-    "gross_loss": -7748,
-    "max_drawdown": -2734,
-    "note": "Walk-forward test, $500 risk per trade, $0.30/oz cost"
+    "net": 848,
+    "gross_profit": 4723,
+    "gross_loss": -3874,
+    "max_drawdown": -1367,
+    "note": "Big-target half (3x). Split half (0.25% risk). Unseen test 3 Aug - 3 Nov 2026, $0.30/oz cost"
   },
   "silver30": {
     "period": "3 Aug - 3 Nov 2026 (unseen test)",
@@ -46,5 +46,41 @@
     "gross_loss": null,
     "max_drawdown": null,
     "note": "EURUSD 15m default settings, demo spread, $500 risk per trade"
+  },
+  "gold1h_st": {
+    "period": "3 Aug - 3 Nov 2026 (unseen test)",
+    "trades": 77,
+    "wins": 54,
+    "losses": 23,
+    "win_rate": 0.701,
+    "net": 714,
+    "gross_profit": 3972,
+    "gross_loss": -3258,
+    "max_drawdown": -720,
+    "note": "Small-target half (0.3x). Split half (0.25% risk). Unseen test 3 Aug - 3 Nov 2026, $0.30/oz cost"
+  },
+  "silver1h_st": {
+    "period": "Nov 2025 - Nov 2026 (gold settings on silver)",
+    "trades": 327,
+    "wins": 219,
+    "losses": 108,
+    "win_rate": 0.67,
+    "net": -1992,
+    "gross_profit": null,
+    "gross_loss": null,
+    "max_drawdown": -2369,
+    "note": "Loses despite 67% wins: watch only"
+  },
+  "silver1h": {
+    "period": "Nov 2025 - Nov 2026 (gold settings on silver)",
+    "trades": 224,
+    "wins": 75,
+    "losses": 149,
+    "win_rate": 0.335,
+    "net": 817,
+    "gross_profit": null,
+    "gross_loss": null,
+    "max_drawdown": -3274,
+    "note": "Watch only"
   }
 }

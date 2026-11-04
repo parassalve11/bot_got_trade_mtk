@@ -67,6 +67,7 @@ class MT5Client:
             allowed,
             account.currency,
             account.balance,
+            account.margin_mode,
         )
 
     def symbol(self, name):

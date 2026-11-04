@@ -28,29 +28,49 @@ class SignalEngine:
         self.streams = list(all_streams)  # disabled streams can be switched on from the dashboard
         self.last_error = {}
 
+    def _guard(self, stream, fn):
+        key = (stream.instance, stream.tv_symbol)
+        try:
+            result = fn()
+            self.last_error.pop(key, None)
+            return result
+        except (Retryable, Reject) as exc:
+            if self.last_error.get(key) != str(exc):  # Log changes, not every poll.
+                log.warning("engine_poll_failed", extra={"reason": str(exc), "event_id": stream.tv_symbol})
+                self.last_error[key] = str(exc)
+        except Exception:
+            # A signal bug must never stop the worker that manages open positions.
+            if self.last_error.get(key) != "unexpected":
+                log.exception("engine_unexpected_failure", extra={"event_id": stream.tv_symbol})
+                self.last_error[key] = "unexpected"
+        return None
+
     def poll(self, now: float):
+        """Evaluate every stream first, then queue closes before entries.
+
+        Several streams can share a symbol (split targets). Queuing all closes for a candle before
+        any new entry avoids briefly holding opposite positions on the same symbol.
+        """
+        pending = []
         for stream in self.streams:
-            key = (stream.instance, stream.tv_symbol)
             mode = effective_stream_mode(self.db, stream, self.mode)
             if mode == "off":
                 continue
-            try:
-                self.poll_stream(stream, now, watch_only=mode != "trade")
-                self.last_error.pop(key, None)
-            except (Retryable, Reject) as exc:
-                if self.last_error.get(key) != str(exc):  # Log changes, not every poll.
-                    log.warning("engine_poll_failed", extra={"reason": str(exc), "event_id": stream.tv_symbol})
-                    self.last_error[key] = str(exc)
-            except Exception:
-                # A signal bug must never stop the worker that manages open positions.
-                if self.last_error.get(key) != "unexpected":
-                    log.exception("engine_unexpected_failure", extra={"event_id": stream.tv_symbol})
-                    self.last_error[key] = "unexpected"
+            item = self._guard(stream, lambda s=stream, m=mode: self.poll_stream(s, now, watch_only=m != "trade"))
+            if item:
+                pending.append((stream, item))
+        pending.sort(key=lambda p: 0 if p[1]["alert"].context.event not in ENTRY_EVENTS else 1)
+        for stream, item in pending:
+            def emit(item=item):
+                self.emit(item["alert"], item["rule"], now, watch_only=item["watch_only"])
+                self.db.set_state(item["key"], item["candle"])
+            self._guard(stream, emit)
 
     def state_key(self, stream):
         return f"engine:{stream.instance}:{stream.tv_symbol}:{stream.timeframe}"
 
     def poll_stream(self, stream, now: float, *, watch_only: bool | None = None):
+        """Evaluate the newest closed candle. Returns a pending alert to emit, or None."""
         watch_only = stream.watch_only if watch_only is None else watch_only
         rule = self.symbols.resolve(stream.tv_symbol, require_enabled=False)
         recent = self.broker.rates(rule.broker_symbol, stream.timeframe, 3)
@@ -83,8 +103,10 @@ class SignalEngine:
         action = decide(signal, position["side"] if position else None, stream, trend)
         if action:
             alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
-            self.emit(alert, rule, now, watch_only=watch_only)
+            # Candle is marked as evaluated only after the alert is queued (see poll()).
+            return {"alert": alert, "rule": rule, "watch_only": watch_only, "key": key, "candle": last["time"]}
         self.db.set_state(key, last["time"])
+        return None
 
     def journal_position(self, stream):
         matches = [

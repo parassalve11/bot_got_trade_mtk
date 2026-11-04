@@ -1,6 +1,6 @@
 //@version=6
 //@strategy_alert_message {"context":{{strategy.order.alert_message}},"fill_price":{{strategy.order.price}},"action":"{{strategy.order.action}}","contracts":{{strategy.order.contracts}},"position":"{{strategy.market_position}}","position_size":{{strategy.market_position_size}},"previous_position":"{{strategy.prev_market_position}}","sent_at":"{{timenow}}"}
-strategy("BYTEFX UT Multi-Asset v1.4", shorttitle = "BYTEFX UT", overlay = true, pyramiding = 0,
+strategy("BYTEFX UT Multi-Asset v1.5", shorttitle = "BYTEFX UT", overlay = true, pyramiding = 0,
      initial_capital = 10000, currency = currency.USD,
      default_qty_type = strategy.fixed, default_qty_value = 1,
      commission_type = strategy.commission.percent, commission_value = 0.004,
@@ -10,9 +10,10 @@ strategy("BYTEFX UT Multi-Asset v1.4", shorttitle = "BYTEFX UT", overlay = true,
      max_labels_count = 500)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BYTEFX UT Multi-Asset v1.4
+// BYTEFX UT Multi-Asset v1.5
 // v1.3: "Asset preset" input with walk-forward-tuned Gold 1H and Silver 30m settings.
 // v1.4: "Gold 1H High-Win + 4H trend" preset (~65% win rate on unseen data, few trades).
+// v1.5: "Gold 1H Small Target" preset (~70% win rate on unseen data; 1 loss ~ 2 wins).
 // v1.3: Default commission 0.004% per side (~spread cost of FX/gold CFDs). For silver use
 //       ~0.03% per side in Properties; set your broker's real costs for accurate results.
 // v1.2 changes (logic):
@@ -32,7 +33,8 @@ const string P_MANUAL = "Manual (use inputs below)"
 const string P_GOLD = "Gold 1H (XAUUSD, tuned 2026)"
 const string P_SILVER = "Silver 30m (XAGUSD, tuned 2026)"
 const string P_GOLD_HW = "Gold 1H High-Win + 4H trend (XAUUSD, tuned 2026)"
-string assetPreset = input.string(P_MANUAL, "Asset preset", options = [P_MANUAL, P_GOLD, P_SILVER, P_GOLD_HW], group = G_UT, tooltip = "Presets override sensitivity, UT ATR period, stop, target and opposite-signal inputs with values chosen by a walk-forward test on 1 year of MT5 data (Nov 2025 - Nov 2026). Past results do not guarantee future results.")
+const string P_GOLD_ST = "Gold 1H Small Target (XAUUSD, tuned 2026)"
+string assetPreset = input.string(P_MANUAL, "Asset preset", options = [P_MANUAL, P_GOLD, P_SILVER, P_GOLD_HW, P_GOLD_ST], group = G_UT, tooltip = "Presets override sensitivity, UT ATR period, stop, target and opposite-signal inputs with values chosen by a walk-forward test on 1 year of MT5 data (Nov 2025 - Nov 2026). Past results do not guarantee future results.")
 float sensitivityInput = input.float(6.4, "Sensitivity", minval = 0.1, step = 0.1, group = G_UT)
 int atrLengthInput = input.int(2, "UT ATR period", minval = 1, group = G_UT)
 bool useHA = input.bool(false, "Use Heikin Ashi signal close", group = G_UT)
@@ -95,13 +97,15 @@ bool presetGold = assetPreset == P_GOLD
 bool presetSilver = assetPreset == P_SILVER
 // High-Win: smaller target (0.75 R) + only trade with the previous completed 4H UT trend.
 bool presetGoldHW = assetPreset == P_GOLD_HW
-bool usePreset = presetGold or presetSilver or presetGoldHW
-float sensitivity = presetGold ? 2.0 : presetSilver ? 4.0 : presetGoldHW ? 3.0 : sensitivityInput
-int atrLength = presetGold ? 1 : presetSilver ? 10 : presetGoldHW ? 2 : atrLengthInput
+// Small Target: same UT settings as Gold 1H but take-profit at 0.3x the stop (~70% win rate on unseen data).
+bool presetGoldST = assetPreset == P_GOLD_ST
+bool usePreset = presetGold or presetSilver or presetGoldHW or presetGoldST
+float sensitivity = presetGold or presetGoldST ? 2.0 : presetSilver ? 4.0 : presetGoldHW ? 3.0 : sensitivityInput
+int atrLength = presetGold or presetGoldST ? 1 : presetSilver ? 10 : presetGoldHW ? 2 : atrLengthInput
 string stopMode = usePreset ? "ATR" : stopModeInput
 float stopAtr = presetGoldHW ? 2.0 : usePreset ? 3.0 : stopAtrInput
 string targetMode = usePreset ? "Risk : Reward" : targetModeInput
-float rewardRatio = presetGoldHW ? 0.75 : usePreset ? 3.0 : rewardRatioInput
+float rewardRatio = presetGoldHW ? 0.75 : presetGoldST ? 0.3 : usePreset ? 3.0 : rewardRatioInput
 string oppositeMode = usePreset ? "Close only" : oppositeModeInput
 bool useHtf = presetGoldHW ? true : useHtfInput
 string htf = presetGoldHW ? "240" : htfInput
@@ -198,7 +202,7 @@ f_tfLabel(string tf) =>
 
 // ── Validation ───────────────────────────────────────────────────────────────
 if barstate.isfirst
-    if (presetGold or presetGoldHW) and timeframe.period != "60"
+    if (presetGold or presetGoldHW or presetGoldST) and timeframe.period != "60"
         runtime.error("The Gold preset was tuned on 1-hour (60) candles. Switch the chart to 1H or choose Manual.")
     if presetSilver and timeframe.period != "30"
         runtime.error("The Silver preset was tuned on 30-minute candles. Switch the chart to 30m or choose Manual.")

@@ -116,6 +116,31 @@ class RiskManager:
         if daily["entry_attempts"] >= self.settings.max_daily_entries:
             raise Reject("daily_entry_limit")
 
+    def symbol_slot(self, account, symbol_name, instance, rule, *, replacing_identifier=None, reason=None):
+        """Can `instance` open a new bot position on this symbol?
+
+        Default (max_bot_positions=1): only when the symbol is completely flat. With a higher limit
+        (split targets), other strategy instances may each hold one journaled bot position, on a
+        hedging account only. Manual/unknown positions and working orders always block.
+        """
+        conflict = reason or "symbol_position_or_order_conflict"
+        if any(o["symbol"] == symbol_name for o in self.broker.orders()):
+            raise Reject(conflict)
+        held = [p for p in self.broker.positions() if p.symbol == symbol_name and p.identifier != replacing_identifier]
+        if not held:
+            return
+        journal = {r["identifier"]: r for r in self.db.open_positions()}
+        if rule.max_bot_positions <= 1:
+            raise Reject(conflict)
+        if any(p.magic != self.settings.magic_number or p.identifier not in journal for p in held):
+            raise Reject(conflict)
+        if any(journal[p.identifier]["instance"] == instance for p in held):
+            raise Reject(conflict)
+        if len(held) >= rule.max_bot_positions:
+            raise Reject("symbol_position_limit")
+        if account.margin_mode != 2:
+            raise Reject("netting_account_cannot_share_symbol")
+
     def plan(self, sig, rule, now, *, replacing_identifier=None):
         account = self.account_guard()
         self.entry_guard(account, now)
@@ -149,8 +174,7 @@ class RiskManager:
         positions = self.broker.positions()
         orders = self.broker.orders()
         others = [p for p in positions if p.identifier != replacing_identifier]
-        if any(p.symbol == symbol.name for p in others) or any(o["symbol"] == symbol.name for o in orders):
-            raise Reject("symbol_position_or_order_conflict")
+        self.symbol_slot(account, symbol.name, sig.instance, rule, replacing_identifier=replacing_identifier)
         if len(others) + len(orders) >= self.settings.max_open_positions:
             raise Reject("account_position_limit")
         distance = sig.stop_ticks * sig.tick_size * rule.price_multiplier

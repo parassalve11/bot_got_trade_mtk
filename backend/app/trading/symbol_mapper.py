@@ -14,6 +14,9 @@ class SymbolRule(BaseModel):
     max_spread_points: float = Field(gt=0)
     max_price_drift_percent: float = Field(default=0.25, gt=0, le=5)
     max_lot: float = Field(gt=0)
+    # >1 lets different strategies (e.g. split small/big targets) each hold one bot position
+    # on this symbol. Requires a hedging account. Default 1 = one position per symbol.
+    max_bot_positions: int = Field(default=1, ge=1, le=4)
 
 
 class SymbolMapper:
