@@ -202,6 +202,10 @@ def run_worker(settings=None):
     stop = threading.Event()
     with WorkerLock(db.path.with_suffix(".worker.lock")):
         db.recover_queue()
+        if settings.stop_on_pc_restart:
+            from app.control import stop_after_long_offline
+
+            stop_after_long_offline(db, time.time())
         try:
             while not stop.is_set():
                 try:

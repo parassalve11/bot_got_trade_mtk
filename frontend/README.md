@@ -21,7 +21,7 @@ Off/Watch/Trade) · Controls (pause/resume, safety hold, close all, read-only li
 ```bash
 cp .env.example .env.local   # fill in BACKEND_URL and DASH_PROXY_SECRET
 npm install
-npm run dev                  # http://localhost:3000
+npm run dev                  # http://localhost:3000 (the startup task serves on http://localhost:72)
 ```
 
 For a bot on the same PC, `BACKEND_URL=http://127.0.0.1:8000` also works.

@@ -1,6 +1,6 @@
-# Examples:  .egister-tasks.ps1                (bot: api + worker)
-#            .egister-tasks.ps1 -Roles web     (dashboard on http://localhost:3000)
-#            .egister-tasks.ps1 -Roles api,worker,web
+# Examples:  .\register-tasks.ps1                (bot: api + worker)
+#            .\register-tasks.ps1 -Roles web     (dashboard on http://localhost:72)
+#            .\register-tasks.ps1 -Roles api,worker,web
 param([string[]]$Roles = @('api', 'worker'), [switch]$IncludeCaddy)
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path

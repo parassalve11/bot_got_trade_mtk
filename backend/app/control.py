@@ -43,6 +43,25 @@ def set_bot_running(db, running: bool, actor: str = "cli", note: str = ""):
     db.audit("bot_started" if running else "bot_stopped", {"by": actor, "note": note or None})
 
 
+OFFLINE_RESTART_SECONDS = 600
+
+
+def stop_after_long_offline(db, now: float, gap_seconds: int = OFFLINE_RESTART_SECONDS) -> bool:
+    """Called once when the worker starts.
+
+    If the worker was not running for longer than `gap_seconds` (PC shut down, restarted or the
+    bot was off), the bot starts STOPPED and waits for Start. A quick automatic restart after a
+    crash keeps its state. Works with Windows Fast Startup, unlike the OS boot time.
+    """
+    last_seen = (db.get_state("worker") or {}).get("at")
+    if not last_seen or now - last_seen <= gap_seconds:
+        return False
+    if bot_running(db):
+        db.set_state("bot_running", False)
+        db.audit("bot_stopped", {"by": "startup", "note": f"Bot was offline {int((now - last_seen) / 60)} min; waiting for Start"}, now)
+    return True
+
+
 def acknowledge_hold(db, settings, note: str, actor: str = "cli"):
     note = require_note(note)
     if db.operations(["UNKNOWN", "SENDING"]):

@@ -145,3 +145,14 @@ def test_engine_does_not_poll_while_stopped(env):
     env.db.set_state("bot_running", True)
     env.worker.tick()
     assert len(calls) == 1
+
+
+def test_bot_waits_for_start_after_pc_was_off(env):
+    from app import control
+
+    assert control.stop_after_long_offline(env.db, 1000.0) is False  # first install: no heartbeat yet
+    env.db.set_state("worker", {"at": 1000.0})
+    assert control.stop_after_long_offline(env.db, 1030.0) is False  # quick automatic restart
+    assert control.bot_running(env.db) is True
+    assert control.stop_after_long_offline(env.db, 1000.0 + 3600) is True  # PC was off for an hour
+    assert control.bot_running(env.db) is False

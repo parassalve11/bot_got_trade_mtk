@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     # Sign-in uses MT5_LOGIN + MT5_SERVER + MT5_PASSWORD (one role: full access).
     dash_proxy_secret: SecretStr = SecretStr("")
     dash_session_hours: int = Field(default=12, ge=1, le=168)
+    # After the PC was off (bot offline > 10 min) the bot waits for Start instead of trading automatically.
+    stop_on_pc_restart: bool = True
 
     @model_validator(mode="after")
     def validate_configuration(self):
