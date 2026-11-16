@@ -54,6 +54,20 @@ def validate_stops(side, sl, tp, tick, symbol, *, modifying=False):
         raise Reject("broker_minimum_target_violation")
 
 
+def bot_capital(db, settings, equity: float) -> float:
+    """Capital the risk rules use. With RISK_CAPITAL set: that amount plus everything the account
+    gained or lost since it was set (never more than the real equity). Otherwise the real equity."""
+    cap = settings.risk_capital
+    if not cap:
+        return equity
+    base = db.get_state("risk_capital_base")
+    if not base or base.get("capital") != cap:
+        base = {"capital": cap, "equity": equity}
+        db.set_state("risk_capital_base", base)
+        db.audit("risk_capital_set", base)
+    return min(equity, cap + equity - base["equity"])
+
+
 @dataclass(frozen=True)
 class EntryPlan:
     request: dict
@@ -98,8 +112,13 @@ class RiskManager:
             raise Retryable("stale_quote")
         return tick
 
+    def capital(self, account) -> float:
+        return bot_capital(self.db, self.settings, account.equity)
+
     def daily(self, account, now):
-        return self.db.observe_equity(account.equity, self.settings.max_daily_loss_percent, now)
+        # Daily loss limit is a % of capital; expressed as a % of real equity for the journal.
+        limit = self.settings.max_daily_loss_percent * self.capital(account) / account.equity
+        return self.db.observe_equity(account.equity, limit, now)
 
     def entry_guard(self, account, now):
         if not self.settings.trading_enabled or self.db.get_state("operator_pause", False):
@@ -185,7 +204,10 @@ class RiskManager:
             raise Reject("invalid_stop_distance")
         sl, tp = protective_levels(sig.side, entry, distance, target, symbol)
         validate_stops(sig.side, sl, tp, tick, symbol)
-        risk_budget = account.equity * sig.risk_percent / 100
+        capital = self.capital(account)
+        if capital <= 0:
+            raise Reject("risk_capital_exhausted")
+        risk_budget = capital * sig.risk_percent / 100
         spendable = risk_budget * (1 - self.settings.risk_cost_buffer_percent / 100)
         # Market-execution brokers may ignore deviation. Include it in pre-trade sizing
         # and verify actual risk/slippage after execution as well.
@@ -204,14 +226,23 @@ class RiskManager:
             ),
             symbol.volume_step,
         )
+        allowed = spendable
         if lot < symbol.volume_min or lot <= 0:
-            raise Reject("risk_budget_below_minimum_lot")
-        if -self.broker.profit(sig.side, symbol.name, lot, worst_entry, sl) > spendable + 1e-6:
+            # Small account: the minimum lot, only if its risk stays within the configured cap.
+            min_cap = capital * self.settings.min_lot_max_risk_percent / 100
+            if 0 < loss <= min_cap + 1e-6 and symbol.volume_min <= min(rule.max_lot, self.settings.max_lot):
+                lot, allowed = symbol.volume_min, min_cap
+            else:
+                raise Reject("risk_budget_below_minimum_lot")
+        planned_risk = -self.broker.profit(sig.side, symbol.name, lot, worst_entry, sl)
+        if planned_risk > allowed + 1e-6:
             raise Reject("normalized_lot_exceeds_risk")
-        if (
-            self.broker.margin(sig.side, symbol.name, lot, worst_entry)
-            > account.margin_free * self.settings.max_margin_fraction
-        ):
+        risk_budget = max(risk_budget, planned_risk)
+        free_margin = account.margin_free
+        if self.settings.risk_capital:
+            used = max(0.0, account.equity - account.margin_free)
+            free_margin = min(free_margin, capital - used)
+        if self.broker.margin(sig.side, symbol.name, lot, worst_entry) > free_margin * self.settings.max_margin_fraction:
             raise Reject("insufficient_free_margin")
         open_risk = 0.0
         for pos in others:
@@ -222,7 +253,7 @@ class RiskManager:
             live = self.tick(pos.symbol, now)
             mark = live.bid if pos.side == "LONG" else live.ask
             open_risk += max(0, -self.broker.profit(pos.side, pos.symbol, pos.volume, mark, pos.sl))
-        if open_risk + risk_budget > account.equity * self.settings.max_total_risk_percent / 100 + 1e-6:
+        if open_risk + risk_budget > capital * self.settings.max_total_risk_percent / 100 + 1e-6:
             raise Reject("portfolio_risk_limit")
         request = dict(
             action=DEAL,

@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 
 from app.control import effective_stream_mode
 from app.schemas import ENTRY_EVENTS, AlertEnvelope
-from app.signals.ut_engine import decide, htf_direction_at, htf_series, load_streams, signal_series
+from app.signals.patterns import pattern_signals
+from app.signals.ut_engine import (BarSignal, decide, htf_direction_at, htf_series, load_streams,
+                                   signal_series)
 from app.trading.errors import Reject, Retryable
 
 log = logging.getLogger(__name__)
@@ -62,7 +64,7 @@ class SignalEngine:
         pending.sort(key=lambda p: 0 if p[1]["alert"].context.event not in ENTRY_EVENTS else 1)
         for stream, item in pending:
             def emit(item=item):
-                self.emit(item["alert"], item["rule"], now, watch_only=item["watch_only"])
+                self.emit(item["alert"], item["rule"], now, watch_only=item["watch_only"], extra=item.get("extra"))
                 self.db.set_state(item["key"], item["candle"])
             self._guard(stream, emit)
 
@@ -92,6 +94,8 @@ class SignalEngine:
         if not bars or bars[-1]["time"] != last["time"]:
             raise Retryable("engine_history_not_aligned")
         symbol = self.broker.symbol(rule.broker_symbol)
+        if stream.strategy == "patterns":
+            return self.poll_patterns(stream, bars, rule, symbol, key, last["time"], close_time, now, watch_only)
         signal = signal_series(bars, stream, symbol.tick_size)[-1]
         position = self.journal_position(stream)
         trend = None
@@ -108,6 +112,36 @@ class SignalEngine:
         self.db.set_state(key, last["time"])
         return None
 
+    def poll_patterns(self, stream, bars, rule, symbol, key, candle, close_time, now, watch_only):
+        """Classic Chart Patterns: the chart's BUY/SELL on this candle, plus its 150-bar time exit."""
+        cfg = stream.patterns
+        found = pattern_signals(bars, cfg)[-1]
+        position = self.journal_position(stream)
+        action = None
+        if position:
+            entry_close = int(position["trade_id"].rsplit(":", 2)[-2]) / 1000
+            held = sum(1 for b in bars if b["time"] + stream.seconds > entry_close + 1e-6)
+            opposite = found is not None and found.side != position["side"]
+            if opposite and cfg.rev_on_opp:
+                action = "reverse"
+            elif held >= cfg.max_hold:
+                action = "time_exit"
+        elif found is not None:
+            action = "entry"
+        if not action:
+            self.db.set_state(key, candle)
+            return None
+        signal = BarSignal(position["side"], bars[-1]["close"], 1.0, None) if action == "time_exit" else None
+        if found is not None and action != "time_exit":
+            tick = symbol.tick_size
+            loss = max(1.0, float(math.ceil(abs(found.close - found.stop) / tick - 1e-9)))
+            profit = max(1.0, float(math.ceil(abs(found.target - found.close) / tick - 1e-9)))
+            signal = BarSignal(found.side, found.close, loss, profit)
+        alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
+        extra = {"reason": f"time exit after {cfg.max_hold} bars"} if action == "time_exit" else {
+            "pattern": found.pattern, "stop": found.stop, "target": found.target}
+        return {"alert": alert, "rule": rule, "watch_only": watch_only, "key": key, "candle": candle, "extra": extra}
+
     def journal_position(self, stream):
         matches = [
             p
@@ -118,8 +152,9 @@ class SignalEngine:
 
     def build_alert(self, stream, action, signal, position, close_time, tick_size, now):
         close_ms = int(round(close_time * 1000))
-        if action == "close":
-            trade_id, side, event, previous = position["trade_id"], position["side"], "opposite_signal", None
+        if action in ("close", "time_exit"):
+            event = "date_end" if action == "time_exit" else "opposite_signal"
+            trade_id, side, previous = position["trade_id"], position["side"], None
             loss_ticks = max(1.0, float(math.ceil(position["stop_distance"] / tick_size - 1e-9)))
             target = position["target_distance"]
             profit_ticks = None if target is None else max(1.0, float(math.ceil(target / tick_size - 1e-9)))
@@ -134,7 +169,7 @@ class SignalEngine:
         entry = event in ENTRY_EVENTS
         context = dict(
             source="mt5_engine",
-            strategy="bytefx_ut_multi_asset",
+            strategy="classic_chart_patterns" if stream.strategy == "patterns" else "bytefx_ut_multi_asset",
             version="1.1.0",
             instance=stream.instance,
             event_id=trade_id + ":" + event,
@@ -169,9 +204,10 @@ class SignalEngine:
             )
         )
 
-    def emit(self, alert, rule, now, *, watch_only=False):
+    def emit(self, alert, rule, now, *, watch_only=False, extra=None):
         sig = alert.context
         details = {
+            **(extra or {}),
             "event_id": sig.event_id,
             "event": sig.event,
             "side": sig.side,

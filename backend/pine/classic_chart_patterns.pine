@@ -1,0 +1,803 @@
+//@version=5
+// ════════════════════════════════════════════════════════════════════════
+//  Classic Chart Patterns — auto detection & drawing
+//  Head and Shoulders · Inverted Head and Shoulders · Symmetrical Triangle
+//  Broadening Triangle · Ascending Triangle · Descending Triangle
+//  Rising Wedge · Falling Wedge · Cup and Handle · Rounding Bottom
+//  Diamond Top · Diamond Bottom
+//  Patterns are confirmed only after pivots close (drawn shapes do not
+//  repaint), so each pattern appears "Pivot length" bars after its last swing.
+//  Hover a pattern name to see what the poster says to expect.
+//  BUY / SELL signals fire when price closes beyond the pattern line.
+// ════════════════════════════════════════════════════════════════════════
+indicator("Classic Chart Patterns", "Chart Patterns", overlay = true, max_lines_count = 500, max_labels_count = 500, max_polylines_count = 100, max_bars_back = 1000)
+
+// ─── Inputs ────────────────────────────────────────────────────────────
+grpS = "Detection"
+pivLen    = input.int(5, "Swing size (bars to the left)", minval = 2, maxval = 50, group = grpS, tooltip = "Bigger = fewer, larger patterns. Try 3-5 on intraday, 5-10 on daily.")
+pivR      = input.int(2, "Confirmation bars (to the right)", minval = 1, maxval = 50, group = grpS, tooltip = "How many candles after a swing before it counts. Small = the pattern is ready before the breakout, so BUY/SELL lands on the breakout candle. Bigger = fewer false patterns but later signals.")
+tolPct    = input.float(25, "Level tolerance (% of pattern height)", minval = 1, maxval = 60, group = grpS) / 100
+flatAtr   = input.float(0.02, "Flat-line threshold (ATR per bar)", minval = 0.001, step = 0.005, group = grpS)
+touchAtr  = input.float(0.6, "Trendline touch tolerance (x ATR)", minval = 0.1, step = 0.1, group = grpS)
+minHAtr   = input.float(1.5, "Min pattern height (x ATR)", minval = 0.1, step = 0.1, group = grpS)
+noOverlap = input.bool(true, "Don't draw overlapping patterns", group = grpS)
+brkBars   = input.int(60, "Watch for breakout for (bars)", minval = 5, group = grpS)
+
+grpP = "Patterns"
+showHS   = input.bool(true, "Head and Shoulders",          group = grpP)
+showIHS  = input.bool(true, "Inverted Head and Shoulders", group = grpP)
+showSym  = input.bool(true, "Symmetrical Triangle",        group = grpP)
+showBT   = input.bool(true, "Broadening Triangle",         group = grpP)
+showAT   = input.bool(true, "Ascending Triangle",          group = grpP)
+showDesc = input.bool(true, "Descending Triangle",         group = grpP)
+showRW   = input.bool(true, "Rising Wedge",                group = grpP)
+showFW   = input.bool(true, "Falling Wedge",               group = grpP)
+showCup  = input.bool(true, "Cup and Handle",              group = grpP)
+showRB   = input.bool(true, "Rounding Bottom",             group = grpP)
+showDiaT = input.bool(true, "Diamond Top",                 group = grpP)
+showDiaB = input.bool(true, "Diamond Bottom",              group = grpP)
+
+grpC = "Cup / Rounding Bottom"
+cupMin = input.int(20, "Min cup length (bars)", minval = 10, group = grpC)
+cupMax = input.int(300, "Max cup length (bars)", minval = 30, maxval = 900, group = grpC)
+roundK = input.float(0.6, "Roundness (0.5 = V allowed, higher = rounder)", minval = 0.3, maxval = 0.9, step = 0.05, group = grpC)
+hdlMax = input.float(0.5, "Max handle pullback (fraction of cup depth)", minval = 0.1, maxval = 0.9, step = 0.05, group = grpC)
+
+grpT = "Trade Signals (BUY / SELL)"
+showSig  = input.bool(true, "Show BUY / SELL signals", group = grpT)
+tradeDir = input.string("Long & Short", "Trade direction", options = ["Long & Short", "Long only", "Short only"], group = grpT)
+sigSet   = input.string("All patterns", "Patterns to trade", options = ["All patterns", "Reversal patterns only", "Continuation patterns only"], group = grpT, tooltip = "Reversal: Head and Shoulders, Inverted Head and Shoulders, Diamond Top, Diamond Bottom, Rounding Bottom, Rising Wedge, Falling Wedge.\nContinuation: Cup and Handle, Ascending, Descending, Symmetrical and Broadening Triangle.")
+withBias = input.bool(true, "Only trade in the pattern's expected direction", group = grpT, tooltip = "Example: no BUY on a Head and Shoulders, no SELL on a Cup and Handle. Symmetrical and Broadening Triangles trade both ways.")
+revOnOpp = input.bool(true, "Reverse position on opposite signal", group = grpT, tooltip = "On: an opposite signal closes the open trade and opens the new one.\nOff: opposite signals are ignored until the open trade exits.")
+showTP   = input.bool(true, "Show Entry / Stop-loss / Target lines", group = grpT)
+tpMult   = input.float(1.0, "Target = pattern height x", minval = 0.25, step = 0.25, group = grpT)
+slBuf    = input.float(0.2, "Stop-loss buffer (x ATR)", minval = 0.0, step = 0.1, group = grpT)
+maxHold  = input.int(150, "Close trade after (bars)", minval = 5, group = grpT)
+maxLate  = input.float(1.0, "Skip if price is already this far past the line (x ATR)", minval = 0.1, step = 0.1, group = grpT, tooltip = "Stops late entries: if the breakout candle closed far beyond the pattern line, no trade is shown and the chart says 'Late breakout - no trade'.")
+showBg   = input.bool(true, "Highlight the BUY / SELL candle", group = grpT)
+buyCol   = input.color(#089981, "BUY color", group = grpT)
+sellCol  = input.color(#F23645, "SELL color", group = grpT)
+
+grpV = "Style"
+lineCol   = input.color(#131722, "Line color", group = grpV)
+txtCol    = input.color(#131722, "Text color", group = grpV)
+autoCol   = input.bool(true, "Use light lines if chart background is dark", group = grpV)
+lineW     = input.int(2, "Line width", minval = 1, maxval = 4, group = grpV)
+lblSize   = input.string("Normal", "Name size", options = ["Small", "Normal", "Large"], group = grpV)
+showZZ    = input.bool(true, "Draw swing path inside triangles / wedges / diamonds", group = grpV)
+showParts = input.bool(true, "Show part tags (Shoulder, Neckline, Handle, Resistance/Support)", group = grpV)
+showBrk   = input.bool(true, "Mark Breakout / Breakdown", group = grpV)
+
+// ─── Colors / sizes ────────────────────────────────────────────────────
+bgLum  = color.r(chart.bg_color) * 0.299 + color.g(chart.bg_color) * 0.587 + color.b(chart.bg_color) * 0.114
+bgDark = bgLum < 128
+cLine  = autoCol and bgDark ? #D1D4DC : lineCol
+cText  = autoCol and bgDark ? #D1D4DC : txtCol
+sz     = lblSize == "Small" ? size.small : lblSize == "Large" ? size.large : size.normal
+noBg   = color.new(color.black, 100)
+
+atrV = ta.atr(14)
+
+// ─── Storage ───────────────────────────────────────────────────────────
+var float[] zP = array.new_float()   // swing price
+var int[]   zB = array.new_int()     // swing bar index
+var int[]   zD = array.new_int()     // 1 = swing high, -1 = swing low
+
+var line[]  curL = array.new_line()  // drawings made on this bar
+var label[] curT = array.new_label()
+var line[]  lpL  = array.new_line()  // drawings of the last pattern
+var label[] lpT  = array.new_label()
+
+// ─── Helpers ───────────────────────────────────────────────────────────
+f_add(float[] ps, int[] bs, int[] ds, float p, int b, int d) =>
+    int cnt = array.size(ps)
+    bool isNew = false
+    int lastDir = 0
+    if cnt > 0
+        lastDir := array.get(ds, cnt - 1)
+    if lastDir == d
+        float last = array.get(ps, cnt - 1)
+        if (d == 1 and p > last) or (d == -1 and p < last)
+            array.set(ps, cnt - 1, p)
+            array.set(bs, cnt - 1, b)
+    else
+        array.push(ps, p)
+        array.push(bs, b)
+        array.push(ds, d)
+        isNew := true
+        if array.size(ps) > 80
+            array.shift(ps)
+            array.shift(bs)
+            array.shift(ds)
+    isNew
+
+// i = 0 is the newest swing point
+// Safe readers: Pine v5 evaluates every part of an "and" condition, so these
+// must return na / 0 instead of failing when the swing list is still short.
+f_p(int i) =>
+    int idx = array.size(zP) - 1 - i
+    float v = na
+    if idx >= 0 and i >= 0
+        v := array.get(zP, idx)
+    v
+f_b(int i) =>
+    int idx = array.size(zB) - 1 - i
+    int v = na
+    if idx >= 0 and i >= 0
+        v := array.get(zB, idx)
+    v
+f_d(int i) =>
+    int idx = array.size(zD) - 1 - i
+    int v = 0
+    if idx >= 0 and i >= 0
+        v := array.get(zD, idx)
+    v
+
+f_y(int x1, float y1, int x2, float y2, int x) =>
+    x2 == x1 ? y1 : y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+
+f_minP(int k) =>
+    float m = f_p(0)
+    for i = 1 to k
+        m := math.min(m, f_p(i))
+    m
+
+f_maxP(int k) =>
+    float m = f_p(0)
+    for i = 1 to k
+        m := math.max(m, f_p(i))
+    m
+
+// x where two lines intersect
+f_ix(int ax1, float ay1, int ax2, float ay2, int bx1, float by1, int bx2, float by2) =>
+    float m1 = (ay2 - ay1) / (ax2 - ax1)
+    float m2 = (by2 - by1) / (bx2 - bx1)
+    m1 == m2 ? na : (by1 - ay1 + m1 * ax1 - m2 * bx1) / (m1 - m2)
+
+// average mid-price (hl2) around bar q
+f_avgMid(int q) =>
+    float s = 0.0
+    int c = 0
+    for j = -2 to 2
+        int off = bar_index - (q + j)
+        if off >= 0 and off < 999
+            s += hl2[off]
+            c += 1
+    c > 0 ? s / c : na
+
+// share of closes between xs and xe that sit outside the two trendlines
+f_viol(int ux1, float uy1, int ux2, float uy2, int lx1, float ly1, int lx2, float ly2, int xs, int xe, float tol) =>
+    int bad = 0
+    int tot = 0
+    for x = xs to xe
+        int off = bar_index - x
+        if off >= 0 and off < 999
+            tot += 1
+            float c = close[off]
+            if c > f_y(ux1, uy1, ux2, uy2, x) + tol or c < f_y(lx1, ly1, lx2, ly2, x) - tol
+                bad += 1
+    tot > 0 ? bad / float(tot) : 1.0
+
+// ─── Drawing helpers ───────────────────────────────────────────────────
+f_ln(int x1, float y1, int x2, float y2, string st, int w) =>
+    line l = line.new(x1, y1, x2, y2, xloc = xloc.bar_index, extend = extend.none, color = cLine, style = st, width = w)
+    array.push(curL, l)
+    l
+
+// Pattern name: always one line of text, placed away from the breakout side
+f_name(int x, float y, string txt, bool above, string tip) =>
+    label t = label.new(x, above ? y + 0.3 * atrV : y - 0.3 * atrV, txt, xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = above ? label.style_label_down : label.style_label_up, textcolor = cText, size = sz, textalign = text.align_center, tooltip = tip)
+    array.push(curT, t)
+    t
+
+f_tag(int x, float y, string txt, bool above) =>
+    label t = label.new(x, y, txt, xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = above ? label.style_label_down : label.style_label_up, textcolor = cText, size = size.small, textalign = text.align_center)
+    array.push(curT, t)
+    t
+
+f_path(int k, string st, int w) =>
+    for i = k to 1
+        f_ln(f_b(i), f_p(i), f_b(i - 1), f_p(i - 1), st, w)
+
+// Cup-shaped curve: left rim -> bottom -> right rim
+f_arc(int xl, float yl, int xb, float yb, int xr, float yr) =>
+    array<chart.point> pts = array.new<chart.point>()
+    int segs = 16
+    for i = 0 to segs
+        float t = i / float(segs)
+        pts.push(chart.point.from_index(int(math.round(xl + (xb - xl) * t)), yb + (yl - yb) * math.pow(1 - t, 2)))
+    for i = 1 to segs
+        float t = i / float(segs)
+        pts.push(chart.point.from_index(int(math.round(xb + (xr - xb) * t)), yb + (yr - yb) * math.pow(t, 2)))
+    polyline.new(pts, curved = false, closed = false, xloc = xloc.bar_index, line_color = cLine, line_style = line.style_solid, line_width = lineW)
+
+f_round(int bk, int span, float lvl, float d) =>
+    float lv1 = f_avgMid(bk + int(math.round(span * 0.25)))
+    float lv3 = f_avgMid(bk + int(math.round(span * 0.75)))
+    (lvl - lv1) / d >= roundK and (lvl - lv3) / d >= roundK
+
+// Rounded cup whose right rim is swing point r (a swing high)
+f_cup(int r) =>
+    int cnt = array.size(zP)
+    bool ok = false
+    int kk = -1
+    float mLow = na
+    int mBar = na
+    float dep = na
+    float rim = f_p(r)
+    int rimBar = f_b(r)
+    float runMin = 1e30
+    int runMinBar = 0
+    float runMax = -1e30
+    int lim = math.min(cnt - 1, r + 40)
+    if lim >= r + 2
+        for k = r + 1 to lim
+            float pk = f_p(k)
+            int bk = f_b(k)
+            if f_d(k) == -1
+                if pk < runMin
+                    runMin := pk
+                    runMinBar := bk
+            else
+                int span = rimBar - bk
+                if span > cupMax
+                    break
+                float lvl = math.min(pk, rim)
+                float d = lvl - runMin
+                bool shapeOk = false
+                if span >= cupMin and d >= minHAtr * atrV and math.abs(pk - rim) <= tolPct * d and runMax <= lvl + 0.1 * d
+                    float pos = float(runMinBar - bk) / span
+                    if pos >= 0.25 and pos <= 0.75
+                        shapeOk := f_round(bk, span, lvl, d)
+                if shapeOk
+                    ok := true
+                    kk := k
+                    mLow := runMin
+                    mBar := runMinBar
+                    dep := d
+                    break
+                runMax := math.max(runMax, pk)
+    [ok, kk, mLow, mBar, dep]
+
+// Rounded base that price is breaking above on THIS bar (no right-rim swing needed)
+f_rbNow() =>
+    int cnt = array.size(zP)
+    bool ok = false
+    int kk = -1
+    float mLow = na
+    int mBar = na
+    float runMin = 1e30
+    int runMinBar = 0
+    float runMax = -1e30
+    int lim = math.min(cnt - 1, 40)
+    if cnt >= 2
+        for k = 0 to lim
+            float pk = f_p(k)
+            int bk = f_b(k)
+            if f_d(k) == -1
+                if pk < runMin
+                    runMin := pk
+                    runMinBar := bk
+            else
+                int span = bar_index - bk
+                if span > cupMax
+                    break
+                bool hit = false
+                if close > pk and close[1] <= pk and runMin < 1e29
+                    float d = pk - runMin
+                    if span >= cupMin and d >= minHAtr * atrV and runMax <= pk
+                        float pos = float(runMinBar - bk) / span
+                        if pos >= 0.25 and pos <= 0.75
+                            hit := f_round(bk, span, pk, d)
+                if hit
+                    ok := true
+                    kk := k
+                    mLow := runMin
+                    mBar := runMinBar
+                    break
+                runMax := math.max(runMax, pk)
+    [ok, kk, mLow, mBar]
+
+// ─── State ─────────────────────────────────────────────────────────────
+var int      lastEnd   = -1
+var int      lpPrevEnd = -1
+var string   lpName    = ""
+var int      lpStart   = na
+var int      lpEnd     = na
+var polyline lpPoly    = na
+
+var line   actUp   = na
+var line   actLo   = na
+var int    actEnd  = na
+var string actName = ""
+var bool   actNeck = false
+var int    actBias = 0
+var bool   actRev  = false
+var float  actH    = na
+var float  actSLl  = na
+var float  actSLs  = na
+
+var int   trDir   = 0      // open trade: 1 long, -1 short, 0 none
+var float trEntry = na
+var float trSL    = na
+var float trTP    = na
+var int   trBar   = na
+var line  trLE    = na
+var line  trLS    = na
+var line  trLT    = na
+var label trTE    = na
+var label trTS    = na
+var label trTT    = na
+
+f_can(int startBar) => not noOverlap or startBar > lastEnd
+
+f_delLast() =>
+    for ln in lpL
+        line.delete(ln)
+    for lb in lpT
+        label.delete(lb)
+    if not na(lpPoly)
+        polyline.delete(lpPoly)
+    array.clear(lpL)
+    array.clear(lpT)
+
+// ─── Update swings ─────────────────────────────────────────────────────
+ph = ta.pivothigh(high, pivLen, pivR)
+pl = ta.pivotlow(low, pivLen, pivR)
+
+bool newPt = false
+if not na(ph)
+    bool a1 = f_add(zP, zB, zD, ph, bar_index - pivR, 1)
+    newPt := newPt or a1
+if not na(pl)
+    bool a2 = f_add(zP, zB, zD, pl, bar_index - pivR, -1)
+    newPt := newPt or a2
+
+int zn = array.size(zP)
+string found = ""
+int pStart = na
+int pEnd = na
+polyline newPoly = na
+bool neckBrk = false
+int pBias = 0         // 1 bullish, -1 bearish, 0 either way
+bool pRev = false     // reversal pattern?
+float pHeight = na    // pattern height, used for the target
+float pSLl = na       // stop level for a long
+float pSLs = na       // stop level for a short
+array.clear(curL)
+array.clear(curT)
+
+// ─── Head and Shoulders ────────────────────────────────────────────────
+if newPt and showHS and zn >= 5 and f_d(0) == 1
+    float h1 = f_p(4)
+    float l1 = f_p(3)
+    float h2 = f_p(2)
+    float l2 = f_p(1)
+    float h3 = f_p(0)
+    float neck = math.max(l1, l2)
+    float ht = h2 - neck
+    bool ok = h2 > h1 and h2 > h3 and ht >= minHAtr * atrV and math.min(h1, h3) - neck >= 0.3 * ht and h2 - math.max(h1, h3) >= 0.15 * ht and math.abs(h1 - h3) <= tolPct * ht and math.abs(l1 - l2) <= tolPct * ht * 1.5
+    if ok and f_can(f_b(4))
+        f_path(4, line.style_solid, lineW)
+        // neckline spans from the left shoulder to the right shoulder, like the poster
+        line nl = f_ln(f_b(4), f_y(f_b(3), l1, f_b(1), l2, f_b(4)), f_b(0), f_y(f_b(3), l1, f_b(1), l2, f_b(0)), line.style_solid, lineW)
+        f_name(f_b(2), h2, "Head and Shoulders", true, "Bearish reversal. Watch for the neckline to break downward.")
+        if showParts
+            f_tag(f_b(4), h1, "Shoulder", true)
+            f_tag(f_b(0), h3, "Shoulder", true)
+            f_tag(f_b(3), l1, "Neckline", false)
+        actUp := na
+        actLo := nl
+        neckBrk := true
+        pStart := f_b(4)
+        pEnd := f_b(0)
+        pBias := -1
+        pRev := true
+        pHeight := ht
+        pSLs := h3
+        found := "Head and Shoulders"
+
+// ─── Inverted Head and Shoulders ───────────────────────────────────────
+if newPt and found == "" and showIHS and zn >= 5 and f_d(0) == -1
+    float l1 = f_p(4)
+    float h1 = f_p(3)
+    float l2 = f_p(2)
+    float h2 = f_p(1)
+    float l3 = f_p(0)
+    float neck = math.min(h1, h2)
+    float ht = neck - l2
+    bool ok = l2 < l1 and l2 < l3 and ht >= minHAtr * atrV and neck - math.max(l1, l3) >= 0.3 * ht and math.min(l1, l3) - l2 >= 0.15 * ht and math.abs(l1 - l3) <= tolPct * ht and math.abs(h1 - h2) <= tolPct * ht * 1.5
+    if ok and f_can(f_b(4))
+        f_path(4, line.style_solid, lineW)
+        line nl = f_ln(f_b(4), f_y(f_b(3), h1, f_b(1), h2, f_b(4)), f_b(0), f_y(f_b(3), h1, f_b(1), h2, f_b(0)), line.style_solid, lineW)
+        f_name(f_b(2), l2, "Inverted Head and Shoulders", false, "Bullish reversal. Watch for the neckline to break upward.")
+        if showParts
+            f_tag(f_b(4), l1, "Shoulder", false)
+            f_tag(f_b(0), l3, "Shoulder", false)
+            f_tag(f_b(3), h1, "Neckline", true)
+        actUp := nl
+        actLo := na
+        neckBrk := true
+        pStart := f_b(4)
+        pEnd := f_b(0)
+        pBias := 1
+        pRev := true
+        pHeight := ht
+        pSLl := l3
+        found := "Inverted Head and Shoulders"
+
+// ─── Diamond Top / Diamond Bottom ──────────────────────────────────────
+if newPt and found == "" and (showDiaT or showDiaB) and zn >= 8
+    int hiO = f_d(0) == 1 ? 0 : 1
+    int loO = 1 - hiO
+    float hLp = f_p(hiO + 4)
+    float hMp = f_p(hiO + 2)
+    float hRp = f_p(hiO)
+    float lLp = f_p(loO + 4)
+    float lMp = f_p(loO + 2)
+    float lRp = f_p(loO)
+    float ht = hMp - lMp
+    float mg = 0.1 * ht
+    bool shape = ht >= minHAtr * atrV and hMp - math.max(hLp, hRp) >= mg and math.min(lLp, lRp) - lMp >= mg
+    // trend into the pattern: midpoint of the swing just before it
+    bool isTop = (f_p(6) + f_p(7)) / 2 < (hMp + lMp) / 2
+    int xs = f_b(5)
+    // a diamond's left half is a broadening formation: replace it if it was drawn first
+    bool repl = lpName == "Broadening Triangle" and lpEnd > xs and lpEnd <= f_b(0)
+    int endRef = repl ? lpPrevEnd : lastEnd
+    if shape and ((isTop and showDiaT) or (not isTop and showDiaB)) and (not noOverlap or xs > endRef)
+        if repl
+            f_delLast()
+            lastEnd := lpPrevEnd
+            lpName := ""
+        int xhL = f_b(hiO + 4)
+        int xhM = f_b(hiO + 2)
+        int xhR = f_b(hiO)
+        int xlL = f_b(loO + 4)
+        int xlM = f_b(loO + 2)
+        int xlR = f_b(loO)
+        // left corner where the two left lines meet
+        float vx = f_ix(xhL, hLp, xhM, hMp, xlL, lLp, xlM, lMp)
+        int spanD = f_b(0) - xs
+        bool useV = not na(vx) and vx <= xs and vx >= xs - spanD / 2
+        if useV
+            int vxi = int(math.round(vx))
+            f_ln(vxi, f_y(xhL, hLp, xhM, hMp, vxi), xhM, hMp, line.style_solid, lineW)
+            f_ln(vxi, f_y(xlL, lLp, xlM, lMp, vxi), xlM, lMp, line.style_solid, lineW)
+        else
+            f_ln(xhL, hLp, xhM, hMp, line.style_solid, lineW)
+            f_ln(xlL, lLp, xlM, lMp, line.style_solid, lineW)
+        line ru = f_ln(xhM, hMp, xhR, hRp, line.style_solid, lineW)
+        line rl = f_ln(xlM, lMp, xlR, lRp, line.style_solid, lineW)
+        if showZZ
+            f_path(5, line.style_dotted, 1)
+        if showParts
+            f_tag(int(math.round((xhL + xhM) / 2.0)), (hLp + hMp) / 2, "Resistance Line", true)
+            f_tag(int(math.round((xlM + xlR) / 2.0)), (lMp + lRp) / 2, "Support Line", false)
+        if isTop
+            f_name(xhM, hMp, "Diamond Top", true, "Bearish reversal after an uptrend. Watch for a breakdown below the support line.")
+        else
+            f_name(xlM, lMp, "Diamond Bottom", false, "Bullish reversal after a downtrend. Watch for a breakout above the resistance line.")
+        actUp := ru
+        actLo := rl
+        pStart := xs
+        pEnd := f_b(0)
+        pBias := isTop ? -1 : 1
+        pRev := true
+        pHeight := ht
+        pSLs := hRp
+        pSLl := lRp
+        found := isTop ? "Diamond Top" : "Diamond Bottom"
+
+// ─── Cup and Handle ────────────────────────────────────────────────────
+if newPt and found == "" and showCup and zn >= 4 and f_d(0) == -1
+    [cOk, cK, cLow, cBar, cDep] = f_cup(1)
+    if cOk
+        float rimR = f_p(1)
+        float rimL = f_p(cK)
+        float hLow = f_p(0)
+        float retr = rimR - hLow
+        int cupStart = f_b(cK)
+        int cupEnd = f_b(1)
+        bool hOk = retr > 0 and retr <= hdlMax * cDep and hLow > cLow + 0.5 * cDep and (f_b(0) - cupEnd) <= 0.5 * (cupEnd - cupStart)
+        // a Rounding Bottom drawn at the same rim becomes a Cup and Handle once the handle forms
+        bool repl = lpName == "Rounding Bottom" and lpEnd == cupEnd
+        int endRef = repl ? lpPrevEnd : lastEnd
+        if hOk and (not noOverlap or cupStart > endRef)
+            if repl
+                f_delLast()
+                lastEnd := lpPrevEnd
+                lpName := ""
+            float rimLvl = math.max(rimL, rimR)
+            newPoly := f_arc(cupStart, rimL, cBar, cLow - 0.2 * atrV, cupEnd, rimR)
+            f_ln(cupEnd, rimR, f_b(0), hLow, line.style_solid, lineW)
+            line rl = f_ln(cupStart, rimLvl, f_b(0), rimLvl, line.style_dashed, 1)
+            f_name(cBar, cLow - 0.2 * atrV, "Cup and Handle", false, "Bullish continuation. Watch for a breakout above the rim after the handle.")
+            if showParts
+                f_tag(f_b(0), hLow, "Handle", false)
+            actUp := rl
+            actLo := na
+            pStart := cupStart
+            pEnd := f_b(0)
+            pBias := 1
+            pRev := false
+            pHeight := cDep
+            pSLl := hLow
+            found := "Cup and Handle"
+
+// ─── Rounding Bottom (right rim forms a swing high) ────────────────────
+if newPt and found == "" and showRB and zn >= 3 and f_d(0) == 1
+    [rOk, rK, rLow, rBar, rDep] = f_cup(0)
+    if rOk and f_can(f_b(rK))
+        float rimL = f_p(rK)
+        float rimR = f_p(0)
+        float rimLvl = math.max(rimL, rimR)
+        newPoly := f_arc(f_b(rK), rimL, rBar, rLow - 0.2 * atrV, f_b(0), rimR)
+        line rl = f_ln(f_b(rK), rimLvl, f_b(0), rimLvl, line.style_dashed, 1)
+        f_name(rBar, rLow - 0.2 * atrV, "Rounding Bottom", false, "Bullish reversal. Watch for a breakout above the rim.")
+        actUp := rl
+        actLo := na
+        pStart := f_b(rK)
+        pEnd := f_b(0)
+        pBias := 1
+        pRev := true
+        pHeight := rDep
+        pSLl := (rimLvl + rLow) / 2
+        found := "Rounding Bottom"
+
+// ─── Rounding Bottom (price breaks straight through the rim) ───────────
+if found == "" and showRB and zn >= 2
+    [nOk, nK, nLow, nBar] = f_rbNow()
+    if nOk
+        int bk = f_b(nK)
+        float rim = f_p(nK)
+        bool dup = lpStart == bk and (lpName == "Rounding Bottom" or lpName == "Cup and Handle")
+        if not dup and f_can(bk)
+            newPoly := f_arc(bk, rim, nBar, nLow - 0.2 * atrV, bar_index, rim)
+            line rl = f_ln(bk, rim, bar_index, rim, line.style_dashed, 1)
+            f_name(nBar, nLow - 0.2 * atrV, "Rounding Bottom", false, "Bullish reversal. Breakout above the rim.")
+            actUp := rl
+            actLo := na
+            pStart := bk
+            pEnd := bar_index
+            pBias := 1
+            pRev := true
+            pHeight := rim - nLow
+            pSLl := (rim + nLow) / 2
+            found := "Rounding Bottom"
+
+// ─── Triangles & Wedges ────────────────────────────────────────────────
+if newPt and found == "" and zn >= 5
+    int hA = 0
+    int hB = 0
+    int hM = -1
+    int lA = 0
+    int lB = 0
+    int lM = -1
+    if f_d(0) == 1
+        hA := 4
+        hB := 0
+        hM := 2
+        lA := 3
+        lB := 1
+    else
+        hA := 3
+        hB := 1
+        lA := 4
+        lB := 0
+        lM := 2
+    int ux1 = f_b(hA)
+    float uy1 = f_p(hA)
+    int ux2 = f_b(hB)
+    float uy2 = f_p(hB)
+    int lx1 = f_b(lA)
+    float ly1 = f_p(lA)
+    int lx2 = f_b(lB)
+    float ly2 = f_p(lB)
+    if ux2 > ux1 and lx2 > lx1
+        float sU = (uy2 - uy1) / (ux2 - ux1) / atrV
+        float sL = (ly2 - ly1) / (lx2 - lx1) / atrV
+        int xs = f_b(4)
+        int xe = f_b(0)
+        float tol = touchAtr * atrV
+        float gS = f_y(ux1, uy1, ux2, uy2, xs) - f_y(lx1, ly1, lx2, ly2, xs)
+        float gE = f_y(ux1, uy1, ux2, uy2, xe) - f_y(lx1, ly1, lx2, ly2, xe)
+        bool tU = hM < 0 or math.abs(f_p(math.max(hM, 0)) - f_y(ux1, uy1, ux2, uy2, f_b(math.max(hM, 0)))) <= tol
+        bool tL = lM < 0 or math.abs(f_p(math.max(lM, 0)) - f_y(lx1, ly1, lx2, ly2, f_b(math.max(lM, 0)))) <= tol
+        bool geomOk = gS > 0 and gE > 0 and math.max(gS, gE) >= minHAtr * atrV and tU and tL
+        bool conv = gE <= 0.8 * gS
+        bool divg = gE >= 1.25 * gS
+        bool upFlat = math.abs(sU) <= flatAtr
+        bool loFlat = math.abs(sL) <= flatAtr
+        bool upRise = sU > flatAtr
+        bool upFall = sU < -flatAtr
+        bool loRise = sL > flatAtr
+        bool loFall = sL < -flatAtr
+        string nm = ""
+        string tip = ""
+        bool above = false
+        if geomOk
+            if upFall and loRise and conv and showSym
+                nm := "Symmetrical Triangle"
+                tip := "Breakout can happen on either side (Upward/Downward)."
+            else if upRise and loFall and divg and showBT
+                nm := "Broadening Triangle"
+                tip := "Breakout can happen on either side (Upward/Downward)."
+            else if upFlat and loRise and conv and showAT
+                nm := "Ascending Triangle"
+                tip := "Usually bullish. Watch for a breakout above the flat resistance."
+            else if upFall and loFlat and conv and showDesc
+                nm := "Descending Triangle"
+                tip := "Usually bearish. Watch for a breakdown below the flat support."
+                above := true
+            else if upRise and loRise and sL > sU and conv and showRW
+                nm := "Rising Wedge"
+                tip := "Usually bearish. Watch for a breakdown below the lower line."
+                above := true
+            else if upFall and loFall and sU < sL and conv and showFW
+                nm := "Falling Wedge"
+                tip := "Usually bullish. Watch for a breakout above the upper line."
+        // price must actually stay inside the two lines
+        if nm != ""
+            if f_viol(ux1, uy1, ux2, uy2, lx1, ly1, lx2, ly2, xs, xe, tol) > 0.1
+                nm := ""
+        if nm != "" and f_can(xs)
+            line u = f_ln(ux1, uy1, xe, f_y(ux1, uy1, ux2, uy2, xe), line.style_solid, lineW)
+            line l = f_ln(lx1, ly1, xe, f_y(lx1, ly1, lx2, ly2, xe), line.style_solid, lineW)
+            if showZZ
+                f_path(4, line.style_dotted, 1)
+            int xm = int(math.round((xs + xe) / 2.0))
+            f_name(xm, above ? f_maxP(4) : f_minP(4), nm, above, tip)
+            actUp := u
+            actLo := l
+            pStart := xs
+            pEnd := xe
+            pBias := nm == "Ascending Triangle" or nm == "Falling Wedge" ? 1 : nm == "Descending Triangle" or nm == "Rising Wedge" ? -1 : 0
+            pRev := nm == "Rising Wedge" or nm == "Falling Wedge"
+            pHeight := math.max(gS, gE)
+            pSLl := f_d(0) == -1 ? f_p(0) : f_p(1)
+            pSLs := f_d(0) == 1 ? f_p(0) : f_p(1)
+            found := nm
+
+// ─── Register pattern ──────────────────────────────────────────────────
+if found != ""
+    lpPrevEnd := lastEnd
+    lastEnd := pEnd
+    lpL := array.copy(curL)
+    lpT := array.copy(curT)
+    lpPoly := newPoly
+    lpName := found
+    lpStart := pStart
+    lpEnd := pEnd
+    actEnd := bar_index + brkBars
+    actName := found
+    actNeck := neckBrk
+    actBias := pBias
+    actRev := pRev
+    actH := pHeight
+    actSLl := pSLl
+    actSLs := pSLs
+    alert(found + " detected on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+// ─── Manage the open trade (exit on stop-loss / target / time) ─────────
+bool buySig = false
+bool sellSig = false
+if trDir != 0 and bar_index > trBar
+    bool hitSL = trDir == 1 ? low <= trSL : high >= trSL
+    bool hitTP = trDir == 1 ? high >= trTP : low <= trTP
+    string ex = ""
+    float exY = close
+    color exC = cText
+    if hitSL
+        ex := "SL hit ✗"
+        exY := trSL
+        exC := sellCol
+    else if hitTP
+        ex := "Target hit ✓"
+        exY := trTP
+        exC := buyCol
+    else if bar_index - trBar >= maxHold
+        ex := "Exit (time)"
+    if not na(trLE)
+        line.set_x2(trLE, bar_index)
+        line.set_x2(trLS, bar_index)
+        line.set_x2(trLT, bar_index)
+        label.set_x(trTE, bar_index)
+        label.set_x(trTS, bar_index)
+        label.set_x(trTT, bar_index)
+    if ex != ""
+        label.new(bar_index, exY, ex, xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = label.style_label_left, textcolor = exC, size = size.small)
+        alert((trDir == 1 ? "LONG " : "SHORT ") + ex + " on " + syminfo.ticker, alert.freq_once_per_bar_close)
+        trDir := 0
+
+// ─── Extend pattern lines & detect Breakout / Breakdown ────────────────
+int sigDir = 0
+float sigLine = na
+if not na(actEnd)
+    if bar_index > actEnd
+        actEnd := na
+    else
+        float uNow = na
+        float lNow = na
+        if not na(actUp)
+            uNow := line.get_price(actUp, bar_index)
+        if not na(actLo)
+            lNow := line.get_price(actLo, bar_index)
+        if not na(uNow) and not na(lNow) and uNow <= lNow
+            actEnd := na     // apex reached without a break
+        else
+            if not na(actUp)
+                line.set_xy2(actUp, bar_index, uNow)
+            if not na(actLo)
+                line.set_xy2(actLo, bar_index, lNow)
+            bool brkUp = not na(uNow) and close > uNow
+            bool brkDn = not na(lNow) and close < lNow
+            if brkUp or brkDn
+                int dir = brkUp ? 1 : -1
+                bool dirOk = tradeDir == "Long & Short" or (dir == 1 and tradeDir == "Long only") or (dir == -1 and tradeDir == "Short only")
+                bool setOk = sigSet == "All patterns" or (sigSet == "Reversal patterns only" and actRev) or (sigSet == "Continuation patterns only" and not actRev)
+                bool biasOk = not withBias or actBias == 0 or actBias == dir
+                float brkLvl = brkUp ? uNow : lNow
+                bool late = (brkUp ? close - uNow : lNow - close) > maxLate * atrV
+                bool wantSig = showSig and dirOk and setOk and biasOk
+                if wantSig and not late
+                    sigDir := dir
+                    sigLine := brkLvl
+                else if wantSig and late
+                    label.new(bar_index, brkUp ? low - 0.3 * atrV : high + 0.3 * atrV, "Late breakout - no trade", xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = brkUp ? label.style_label_up : label.style_label_down, textcolor = color.gray, size = size.small)
+                else if showBrk
+                    string txtUp = actNeck ? "▲ Neckline Breaks" : "▲ Breakout"
+                    string txtDn = actNeck ? "Neckline Breaks ▼" : "Breakdown ▼"
+                    label.new(bar_index, brkUp ? low - 0.3 * atrV : high + 0.3 * atrV, brkUp ? txtUp : txtDn, xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = brkUp ? label.style_label_up : label.style_label_down, textcolor = cText, size = size.small)
+                alert(actName + (brkUp ? " breakout" : " breakdown") + " on " + syminfo.ticker, alert.freq_once_per_bar_close)
+                actEnd := na
+
+// ─── Open a trade on a BUY / SELL signal ───────────────────────────────
+if sigDir != 0 and trDir != 0
+    if trDir == sigDir
+        label.new(bar_index, sigDir == 1 ? low - 0.3 * atrV : high + 0.3 * atrV, sigDir == 1 ? "▲ Breakout (already long)" : "Breakdown ▼ (already short)", xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = sigDir == 1 ? label.style_label_up : label.style_label_down, textcolor = cText, size = size.small)
+        sigDir := 0          // already in a trade this way
+    else if revOnOpp
+        label.new(bar_index, close, "Reverse ⇄", xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = label.style_label_left, textcolor = cText, size = size.small)
+        trDir := 0
+    else
+        label.new(bar_index, sigDir == 1 ? low - 0.3 * atrV : high + 0.3 * atrV, sigDir == 1 ? "▲ Breakout (in a short - ignored)" : "Breakdown ▼ (in a long - ignored)", xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = sigDir == 1 ? label.style_label_up : label.style_label_down, textcolor = color.gray, size = size.small)
+        sigDir := 0          // ignore opposite signal while a trade is open
+
+if sigDir != 0
+    float en = close
+    float sl = sigDir == 1 ? actSLl : actSLs
+    float h0 = na(actH) ? 2 * atrV : actH
+    if na(sl) or (sigDir == 1 and sl >= en) or (sigDir == -1 and sl <= en)
+        sl := en - sigDir * 0.5 * h0
+    sl := sl - sigDir * slBuf * atrV
+    float tp = en + sigDir * h0 * tpMult
+    string side = sigDir == 1 ? "BUY" : "SELL"
+    string tipT = (sigDir == 1 ? "LONG" : "SHORT") + " · " + actName + (actRev ? " (reversal)" : " (continuation)") + "\nEntry: " + str.tostring(en, format.mintick) + "\nStop-loss: " + str.tostring(sl, format.mintick) + "\nTarget: " + str.tostring(tp, format.mintick)
+    string why = actNeck ? "Neckline break" : (sigDir == 1 ? "Breakout" : "Breakdown")
+    // marker exactly where price crossed the pattern line
+    label.new(bar_index, sigLine, "", xloc = xloc.bar_index, yloc = yloc.price, color = sigDir == 1 ? buyCol : sellCol, style = label.style_circle, size = size.tiny, tooltip = why + " of " + actName)
+    // BUY / SELL box attached to the breakout candle
+    label.new(bar_index, sigDir == 1 ? low - 0.25 * atrV : high + 0.25 * atrV, (sigDir == 1 ? "BUY ▲ " : "SELL ▼ ") + why, xloc = xloc.bar_index, yloc = yloc.price, color = sigDir == 1 ? buyCol : sellCol, style = sigDir == 1 ? label.style_label_up : label.style_label_down, textcolor = color.white, size = size.normal, tooltip = tipT)
+    trDir := sigDir
+    trEntry := en
+    trSL := sl
+    trTP := tp
+    trBar := bar_index
+    trLE := na
+    if showTP
+        trLE := line.new(bar_index, en, bar_index + 1, en, xloc = xloc.bar_index, color = cText, style = line.style_dotted, width = 1)
+        trLS := line.new(bar_index, sl, bar_index + 1, sl, xloc = xloc.bar_index, color = sellCol, style = line.style_dashed, width = 1)
+        trLT := line.new(bar_index, tp, bar_index + 1, tp, xloc = xloc.bar_index, color = buyCol, style = line.style_dashed, width = 1)
+        trTE := label.new(bar_index + 1, en, "Entry " + str.tostring(en, format.mintick), xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = label.style_label_left, textcolor = cText, size = size.small)
+        trTS := label.new(bar_index + 1, sl, "SL " + str.tostring(sl, format.mintick), xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = label.style_label_left, textcolor = sellCol, size = size.small)
+        trTT := label.new(bar_index + 1, tp, "Target " + str.tostring(tp, format.mintick), xloc = xloc.bar_index, yloc = yloc.price, color = noBg, style = label.style_label_left, textcolor = buyCol, size = size.small)
+    buySig := sigDir == 1
+    sellSig := sigDir == -1
+    alert(side + " " + syminfo.ticker + " (" + actName + ") entry " + str.tostring(en, format.mintick) + " SL " + str.tostring(sl, format.mintick) + " target " + str.tostring(tp, format.mintick), alert.freq_once_per_bar_close)
+
+// ─── Alert conditions (pick these in TradingView's "Create Alert") ──────
+bgcolor(showBg and buySig ? color.new(buyCol, 80) : showBg and sellSig ? color.new(sellCol, 80) : na, title = "Signal candle")
+
+alertcondition(buySig, "BUY signal", "Chart Patterns: BUY {{ticker}} at {{close}}")
+alertcondition(sellSig, "SELL signal", "Chart Patterns: SELL {{ticker}} at {{close}}")

@@ -26,7 +26,13 @@ class Settings(BaseSettings):
     mt5_timeout_ms: int = Field(default=10000, ge=1000, le=60000)
     mt5_server_utc_offset_seconds: int = Field(default=0, ge=-43200, le=50400)
     max_risk_percent: float = Field(default=0.5, gt=0, le=5, allow_inf_nan=False)
-    max_total_risk_percent: float = Field(default=2, gt=0, le=20, allow_inf_nan=False)
+    max_total_risk_percent: float = Field(default=2, gt=0, le=30, allow_inf_nan=False)
+    # Trade as if the account held only this much (e.g. 1000 on a 100k demo). Every risk % (per
+    # trade, total open, daily loss) and the free-margin check use it: capital + bot P/L since set.
+    risk_capital: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # Small accounts: if risk % gives less than the broker's minimum lot, take the minimum lot only
+    # when it risks at most this % of capital (0 = never; the trade is skipped).
+    min_lot_max_risk_percent: float = Field(default=0, ge=0, le=10, allow_inf_nan=False)
     max_daily_loss_percent: float = Field(default=3, gt=0, le=20, allow_inf_nan=False)
     max_daily_entries: int = Field(default=10, ge=1)
     max_open_positions: int = Field(default=5, ge=1, le=100)

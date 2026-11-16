@@ -1,35 +1,74 @@
 {
-  "OANDA:EURUSD": {
-    "broker_symbol": "EURUSD",
-    "enabled": true,
-    "price_multiplier": 1.0,
-    "max_spread_points": 30,
-    "max_price_drift_percent": 0.25,
-    "max_lot": 1.0
-  },
-  "OANDA:GBPUSD": {
-    "broker_symbol": "GBPUSD",
-    "enabled": false,
-    "price_multiplier": 1.0,
-    "max_spread_points": 40,
-    "max_price_drift_percent": 0.25,
-    "max_lot": 1.0
-  },
   "OANDA:XAUUSD": {
     "broker_symbol": "XAUUSD",
     "enabled": true,
     "price_multiplier": 1.0,
     "max_spread_points": 50,
     "max_price_drift_percent": 0.3,
-    "max_lot": 0.5,
-    "max_bot_positions": 2
+    "max_lot": 0.5
   },
   "OANDA:XAGUSD": {
     "broker_symbol": "XAGUSD",
-    "enabled": false,
+    "enabled": true,
     "price_multiplier": 1.0,
     "max_spread_points": 60,
     "max_price_drift_percent": 0.4,
-    "max_lot": 1.0
+    "max_lot": 0.5
+  },
+  "NASDAQ:NVDA": {
+    "broker_symbol": "NVDA",
+    "enabled": true,
+    "price_multiplier": 1.0,
+    "max_spread_points": 30,
+    "max_price_drift_percent": 0.5,
+    "max_lot": 50
+  },
+  "NASDAQ:AMD": {
+    "broker_symbol": "AMD",
+    "enabled": true,
+    "price_multiplier": 1.0,
+    "max_spread_points": 100,
+    "max_price_drift_percent": 0.5,
+    "max_lot": 20
+  },
+  "OANDA:USDCHF": {
+    "broker_symbol": "USDCHF",
+    "enabled": true,
+    "price_multiplier": 1.0,
+    "max_spread_points": 40,
+    "max_price_drift_percent": 0.25,
+    "max_lot": 1
+  },
+  "OANDA:GBPUSD": {
+    "broker_symbol": "GBPUSD",
+    "enabled": true,
+    "price_multiplier": 1.0,
+    "max_spread_points": 40,
+    "max_price_drift_percent": 0.25,
+    "max_lot": 1
+  },
+  "OANDA:USDCAD": {
+    "broker_symbol": "USDCAD",
+    "enabled": true,
+    "price_multiplier": 1.0,
+    "max_spread_points": 40,
+    "max_price_drift_percent": 0.25,
+    "max_lot": 1
+  },
+  "OANDA:EURUSD": {
+    "broker_symbol": "EURUSD",
+    "enabled": true,
+    "price_multiplier": 1.0,
+    "max_spread_points": 30,
+    "max_price_drift_percent": 0.25,
+    "max_lot": 1
+  },
+  "OANDA:USDCNH": {
+    "broker_symbol": "USDCNH",
+    "enabled": true,
+    "price_multiplier": 1.0,
+    "max_spread_points": 200,
+    "max_price_drift_percent": 0.25,
+    "max_lot": 1
   }
 }

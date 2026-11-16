@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from app.signals.patterns import PatternSettings
+
 NA = float("nan")
 TIMEFRAME_SECONDS = {"1": 60, "5": 300, "15": 900, "30": 1800, "60": 3600, "240": 14400}
 
@@ -46,6 +48,10 @@ class StreamConfig(BaseModel):
     htf_filter: Literal["none", "240"] = "none"
     # Record signals only, even when ENGINE_MODE=trade (for streams still being evaluated).
     watch_only: bool = False
+    # "ut" = UT Bot (fields above); "patterns" = Classic Chart Patterns (app/signals/patterns.py,
+    # settings in `patterns`; stop/target come from the pattern, the UT fields are ignored).
+    strategy: Literal["ut", "patterns"] = "ut"
+    patterns: PatternSettings = Field(default_factory=PatternSettings)
 
     @property
     def seconds(self) -> int:

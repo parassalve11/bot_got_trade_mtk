@@ -55,9 +55,13 @@ export default function StrategiesPage() {
               }
             >
               <p className="text-xs text-slate-500">
-                Sensitivity {s.settings.sensitivity} · ATR {s.settings.atr_length} · Stop {s.settings.stop_atr}× ATR ·
-                Target {s.settings.reward_ratio}× · {s.settings.opposite_mode}
-                {s.settings.htf_filter !== "none" && " · 4H trend filter"} · Risk {s.settings.risk_percent}%
+                {s.settings.description ?? (
+                  <>
+                    Sensitivity {s.settings.sensitivity} · ATR {s.settings.atr_length} · Stop {s.settings.stop_atr}× ATR ·
+                    Target {s.settings.reward_ratio}× · {s.settings.opposite_mode}
+                    {s.settings.htf_filter !== "none" && " · 4H trend filter"} · Risk {s.settings.risk_percent}%
+                  </>
+                )}
               </p>
 
               <div className="mt-4 grid gap-4 sm:grid-cols-2">

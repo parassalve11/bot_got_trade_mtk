@@ -1,16 +1,4 @@
 {
-  "gold1h_hw": {
-    "period": "3 Aug - 3 Nov 2026 (unseen test)",
-    "trades": 17,
-    "wins": 11,
-    "losses": 6,
-    "win_rate": 0.647,
-    "net": 1243,
-    "gross_profit": 4076,
-    "gross_loss": -2833,
-    "max_drawdown": -1084,
-    "note": "Walk-forward test, $500 risk per trade, $0.30/oz cost"
-  },
   "gold1h": {
     "period": "3 Aug - 3 Nov 2026 (unseen test)",
     "trades": 51,
@@ -22,30 +10,6 @@
     "gross_loss": -7748,
     "max_drawdown": -2734,
     "note": "Big-target half (3x). Split half (0.5% risk). Unseen test 3 Aug - 3 Nov 2026, $0.30/oz cost"
-  },
-  "silver30": {
-    "period": "3 Aug - 3 Nov 2026 (unseen test)",
-    "trades": 36,
-    "wins": 14,
-    "losses": 22,
-    "win_rate": 0.389,
-    "net": 2600,
-    "gross_profit": null,
-    "gross_loss": null,
-    "max_drawdown": -3100,
-    "note": "Walk-forward test, $500 risk per trade, $0.03/oz cost"
-  },
-  "engine": {
-    "period": "3 Sep - 3 Nov 2026",
-    "trades": 42,
-    "wins": 20,
-    "losses": 22,
-    "win_rate": 0.476,
-    "net": 3913,
-    "gross_profit": null,
-    "gross_loss": null,
-    "max_drawdown": null,
-    "note": "EURUSD 15m default settings, demo spread, $500 risk per trade"
   },
   "gold1h_st": {
     "period": "3 Aug - 3 Nov 2026 (unseen test)",
@@ -59,28 +23,112 @@
     "max_drawdown": -1440,
     "note": "Small-target half (0.3x). Split half (0.5% risk). Unseen test 3 Aug - 3 Nov 2026, $0.30/oz cost"
   },
-  "silver1h_st": {
-    "period": "Nov 2025 - Nov 2026 (gold settings on silver)",
-    "trades": 327,
-    "wins": 219,
-    "losses": 108,
-    "win_rate": 0.67,
-    "net": -1992,
-    "gross_profit": null,
-    "gross_loss": null,
-    "max_drawdown": -2369,
-    "note": "Loses despite 67% wins: watch only"
+  "cp_eurusd": {
+    "period": "last 12 months (from 2025-11-19)",
+    "trades": 42,
+    "wins": 13,
+    "losses": 29,
+    "win_rate": 31.0,
+    "net": -6.45,
+    "gross_profit": 252.53,
+    "gross_loss": -258.98,
+    "max_drawdown": -120.8,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 42 signals, 0 skipped (min lot too big). In R: -0.7R."
   },
-  "silver1h": {
-    "period": "Nov 2025 - Nov 2026 (gold settings on silver)",
-    "trades": 224,
-    "wins": 75,
-    "losses": 149,
-    "win_rate": 0.335,
-    "net": 817,
-    "gross_profit": null,
-    "gross_loss": null,
-    "max_drawdown": -3274,
-    "note": "Watch only"
+  "cp_gbpusd": {
+    "period": "last 12 months (from 2025-11-18)",
+    "trades": 47,
+    "wins": 15,
+    "losses": 32,
+    "win_rate": 31.9,
+    "net": -52.99,
+    "gross_profit": 219.02,
+    "gross_loss": -272.01,
+    "max_drawdown": -105.98,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 47 signals, 0 skipped (min lot too big). In R: -4.4R."
+  },
+  "cp_usdcad": {
+    "period": "last 12 months (from 2025-11-24)",
+    "trades": 53,
+    "wins": 20,
+    "losses": 33,
+    "win_rate": 37.7,
+    "net": -14.69,
+    "gross_profit": 275.68,
+    "gross_loss": -290.37,
+    "max_drawdown": -76.23,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 53 signals, 0 skipped (min lot too big). In R: -0.4R."
+  },
+  "cp_usdchf": {
+    "period": "last 12 months (from 2025-12-01)",
+    "trades": 55,
+    "wins": 17,
+    "losses": 38,
+    "win_rate": 30.9,
+    "net": -108.48,
+    "gross_profit": 207.45,
+    "gross_loss": -315.94,
+    "max_drawdown": -116.83,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 55 signals, 0 skipped (min lot too big). In R: -11.4R."
+  },
+  "cp_usdcnh": {
+    "period": "last 12 months (from 2025-11-26)",
+    "trades": 49,
+    "wins": 21,
+    "losses": 28,
+    "win_rate": 42.9,
+    "net": 146.57,
+    "gross_profit": 416.26,
+    "gross_loss": -269.69,
+    "max_drawdown": -71.46,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 49 signals, 0 skipped (min lot too big). In R: +15.2R."
+  },
+  "cp_xauusd": {
+    "period": "last 12 months (from 2025-11-20)",
+    "trades": 41,
+    "wins": 18,
+    "losses": 23,
+    "win_rate": 43.9,
+    "net": 425.35,
+    "gross_profit": 1256.6,
+    "gross_loss": -831.25,
+    "max_drawdown": -377.82,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 47 signals, 6 skipped (min lot too big). In R: +22.4R."
+  },
+  "cp_xagusd": {
+    "period": "last 12 months (from 2025-11-19)",
+    "trades": 24,
+    "wins": 7,
+    "losses": 17,
+    "win_rate": 29.2,
+    "net": 317.44,
+    "gross_profit": 877.34,
+    "gross_loss": -559.9,
+    "max_drawdown": -222.7,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 47 signals, 23 skipped (min lot too big). In R: -7.1R."
+  },
+  "cp_amd": {
+    "period": "last 12 months (from 2025-11-20)",
+    "trades": 10,
+    "wins": 3,
+    "losses": 7,
+    "win_rate": 30.0,
+    "net": -21.72,
+    "gross_profit": 55.5,
+    "gross_loss": -77.22,
+    "max_drawdown": -44.13,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 13 signals, 3 skipped (min lot too big). In R: -4.2R."
+  },
+  "cp_nvda": {
+    "period": "last 12 months (from 2025-11-24)",
+    "trades": 12,
+    "wins": 6,
+    "losses": 6,
+    "win_rate": 50.0,
+    "net": 56.52,
+    "gross_profit": 94.36,
+    "gross_loss": -37.84,
+    "max_drawdown": -23.11,
+    "note": "MT5 1H candles, $1000 capital, 1.0% risk (min lot allowed up to 5.0%), spread included. 12 signals, 0 skipped (min lot too big). In R: +6.0R."
   }
 }

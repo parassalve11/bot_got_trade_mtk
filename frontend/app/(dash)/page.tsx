@@ -30,7 +30,12 @@ export default function OverviewPage() {
       <ErrorBanner message={error} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Balance" value={money(o?.account.balance, currency)} />
+        {o?.account.capital_start ? (
+          <Stat label="Bot capital" value={money(o.account.capital, currency)}
+            hint={`started at ${money(o.account.capital_start, currency)} · demo holds ${money(o.account.equity, currency)}`} />
+        ) : (
+          <Stat label="Balance" value={money(o?.account.balance, currency)} />
+        )}
         <Stat label="Equity" value={money(o?.account.equity, currency)} />
         <Stat label="Floating P/L" value={money(o?.account.floating, currency, true)} tone={plClass(o?.account.floating)} />
         <Stat label="Today P/L" value={money(o?.daily.today_pl, currency, true)} tone={plClass(o?.daily.today_pl)}

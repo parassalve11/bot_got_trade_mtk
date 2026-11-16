@@ -206,6 +206,7 @@ def overview(request: Request):
     daily = status["daily_risk"] or {}
     start = daily.get("starting_equity")
     equity = snapshot.get("equity")
+    capital = _capital(settings, db, equity)
     return {
         "now": now,
         "health": {"api": True, "worker": fresh, "mt5": bool(fresh and beat.get("connected")),
@@ -217,10 +218,11 @@ def overview(request: Request):
         "account": {"login": "***" + str(settings.mt5_login)[-3:], "server": settings.mt5_server,
                     "currency": snapshot.get("currency", "USD"), "balance": snapshot.get("balance"),
                     "equity": equity, "margin_free": snapshot.get("margin_free"),
-                    "floating": snapshot.get("floating"), "snapshot_at": snapshot.get("at")},
+                    "floating": snapshot.get("floating"), "snapshot_at": snapshot.get("at"),
+                    "capital": capital, "capital_start": settings.risk_capital},
         "daily": {"starting_equity": start, "today_pl": (equity - start) if equity and start else None,
                   "loss_limit_percent": settings.max_daily_loss_percent,
-                  "loss_used_percent": max(0.0, (start - equity) / start * 100) if equity and start else 0.0,
+                  "loss_used_percent": max(0.0, (start - equity) / capital * 100) if equity and start and capital else 0.0,
                   "entries": daily.get("entry_attempts", 0), "max_entries": settings.max_daily_entries,
                   "paused_by_loss": bool(daily.get("paused"))},
         "limits": {"max_open_positions": settings.max_open_positions, "max_risk_percent": settings.max_risk_percent,
@@ -245,6 +247,21 @@ def signals(request: Request, limit: int = 100):
     return {"signals": _signals(request.app.state.db, max(1, min(limit, 500)))}
 
 
+def _pattern_text(s) -> str:
+    p = s.patterns
+    return (f"Classic Chart Patterns · swing {p.piv_len}/{p.piv_r} · stop at pattern swing + {p.sl_buf}× ATR · "
+            f"target {p.tp_mult}× pattern height · exit after {p.max_hold} bars · "
+            f"{'reverse' if p.rev_on_opp else 'ignore'} on opposite signal · Risk {s.risk_percent}%")
+
+
+def _capital(settings, db, equity):
+    """Bot capital as the worker computes it (read-only here)."""
+    base = db.get_state("risk_capital_base") or {}
+    if not settings.risk_capital or equity is None or base.get("capital") != settings.risk_capital:
+        return settings.risk_capital or equity
+    return min(equity, settings.risk_capital + equity - base["equity"])
+
+
 @router.get("/strategies", dependencies=[Depends(proxy_guard), Depends(session)])
 def strategies(request: Request):
     settings, db = request.app.state.settings, request.app.state.db
@@ -259,7 +276,8 @@ def strategies(request: Request):
         out.append({
             "instance": s.instance, "tv_symbol": s.tv_symbol, "broker_symbol": rule.broker_symbol if rule else None,
             "symbol_enabled": bool(rule and rule.enabled), "timeframe": s.timeframe,
-            "settings": {"sensitivity": s.sensitivity, "atr_length": s.atr_length, "stop_mode": s.stop_mode,
+            "settings": {"description": _pattern_text(s)} if s.strategy == "patterns" else {
+                         "sensitivity": s.sensitivity, "atr_length": s.atr_length, "stop_mode": s.stop_mode,
                          "stop_atr": s.stop_atr, "target_mode": s.target_mode, "reward_ratio": s.reward_ratio,
                          "opposite_mode": s.opposite_mode, "direction": s.direction, "htf_filter": s.htf_filter,
                          "risk_percent": s.risk_percent},

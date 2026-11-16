@@ -83,6 +83,8 @@ export type Overview = {
     margin_free: number | null;
     floating: number | null;
     snapshot_at: number | null;
+    capital?: number | null;
+    capital_start?: number | null;
   };
   daily: {
     starting_equity: number | null;
@@ -121,6 +123,7 @@ export type Strategy = {
   symbol_enabled: boolean;
   timeframe: string;
   settings: {
+    description?: string;
     sensitivity: number;
     atr_length: number;
     stop_mode: string;
