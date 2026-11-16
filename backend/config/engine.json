@@ -6,7 +6,11 @@
     "timeframe": "60",
     "strategy": "patterns",
     "risk_percent": 1.0,
-    "history_bars": 3000
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
   },
   {
     "enabled": true,
@@ -15,52 +19,11 @@
     "timeframe": "60",
     "strategy": "patterns",
     "risk_percent": 1.0,
-    "history_bars": 3000
-  },
-  {
-    "enabled": true,
-    "instance": "cp_nvda",
-    "tv_symbol": "NASDAQ:NVDA",
-    "timeframe": "60",
-    "strategy": "patterns",
-    "risk_percent": 1.0,
-    "history_bars": 3000
-  },
-  {
-    "enabled": true,
-    "instance": "cp_amd",
-    "tv_symbol": "NASDAQ:AMD",
-    "timeframe": "60",
-    "strategy": "patterns",
-    "risk_percent": 1.0,
-    "history_bars": 3000
-  },
-  {
-    "enabled": true,
-    "instance": "cp_usdchf",
-    "tv_symbol": "OANDA:USDCHF",
-    "timeframe": "60",
-    "strategy": "patterns",
-    "risk_percent": 1.0,
-    "history_bars": 3000
-  },
-  {
-    "enabled": true,
-    "instance": "cp_gbpusd",
-    "tv_symbol": "OANDA:GBPUSD",
-    "timeframe": "60",
-    "strategy": "patterns",
-    "risk_percent": 1.0,
-    "history_bars": 3000
-  },
-  {
-    "enabled": true,
-    "instance": "cp_usdcad",
-    "tv_symbol": "OANDA:USDCAD",
-    "timeframe": "60",
-    "strategy": "patterns",
-    "risk_percent": 1.0,
-    "history_bars": 3000
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
   },
   {
     "enabled": true,
@@ -69,7 +32,37 @@
     "timeframe": "60",
     "strategy": "patterns",
     "risk_percent": 1.0,
-    "history_bars": 3000
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
+  },
+  {
+    "enabled": true,
+    "instance": "cp_nzdusd",
+    "tv_symbol": "OANDA:NZDUSD",
+    "timeframe": "60",
+    "strategy": "patterns",
+    "risk_percent": 1.0,
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
+  },
+  {
+    "enabled": true,
+    "instance": "cp_usdjpy",
+    "tv_symbol": "OANDA:USDJPY",
+    "timeframe": "60",
+    "strategy": "patterns",
+    "risk_percent": 1.0,
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
   },
   {
     "enabled": true,
@@ -78,7 +71,37 @@
     "timeframe": "60",
     "strategy": "patterns",
     "risk_percent": 1.0,
-    "history_bars": 3000
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
+  },
+  {
+    "enabled": true,
+    "instance": "cp_nvda",
+    "tv_symbol": "NASDAQ:NVDA",
+    "timeframe": "60",
+    "strategy": "patterns",
+    "risk_percent": 1.0,
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
+  },
+  {
+    "enabled": true,
+    "instance": "cp_amd",
+    "tv_symbol": "NASDAQ:AMD",
+    "timeframe": "60",
+    "strategy": "patterns",
+    "risk_percent": 1.0,
+    "history_bars": 3000,
+    "patterns": {
+      "trade_dir": "Short only",
+      "tp_mult": 0.5
+    }
   },
   {
     "enabled": false,

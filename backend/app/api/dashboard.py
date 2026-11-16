@@ -249,7 +249,8 @@ def signals(request: Request, limit: int = 100):
 
 def _pattern_text(s) -> str:
     p = s.patterns
-    return (f"Classic Chart Patterns · swing {p.piv_len}/{p.piv_r} · stop at pattern swing + {p.sl_buf}× ATR · "
+    side = {"Short only": "SELL only", "Long only": "BUY only"}.get(p.trade_dir, "BUY + SELL")
+    return (f"Classic Chart Patterns · {side} · swing {p.piv_len}/{p.piv_r} · stop at pattern swing + {p.sl_buf}× ATR · "
             f"target {p.tp_mult}× pattern height · exit after {p.max_hold} bars · "
             f"{'reverse' if p.rev_on_opp else 'ignore'} on opposite signal · Risk {s.risk_percent}%")
 
