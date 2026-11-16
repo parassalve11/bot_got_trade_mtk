@@ -1,0 +1,1009 @@
+//@version=5
+// ════════════════════════════════════════════════════════════════════════
+//  Scalping Patterns — 7 scalping setups for 1-minute and 5-minute charts
+//  1 Opening Range Breakout (ORB)    2 VWAP Pullback    3 EMA 9/20 Micro Pullback
+//  4 Bull / Bear Flag    5 Inside Bar Breakout    6 Liquidity Sweep Reversal
+//  7 Double Top / Double Bottom
+//  Every signal shows BUY / SELL on the trigger candle with Entry, SL, TP1, TP2.
+//  After TP1 the stop moves to entry (breakeven). Signals confirm on candle close.
+//  Signal mode "More trades" (default) is tuned for active scalping.
+//  Session hours / square-off apply automatically only to Indian (NSE/BSE/MCX)
+//  symbols; crypto, forex and US charts trade all day.
+//  v2 fixes: (1) a stop gapped through is filled at the candle open, not at the SL price;
+//  (2) "Reverse on opposite signal" really reverses after a losing trade (the loss pause
+//  blocked it); (3) BUY/SELL only on a closed candle, so labels and alerts never flicker on the
+//  live candle; (4) optional cost per trade so the dashboard can show results after costs.
+// ════════════════════════════════════════════════════════════════════════
+indicator("Scalping Patterns", "Scalp Patterns", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 200, max_bars_back = 500)
+
+// ─── Inputs: signal mode ───────────────────────────────────────────────
+grpM = "Signal Mode"
+mode   = input.string("More trades", "Signal mode", options = ["More trades", "Balanced", "Strict", "Custom"], group = grpM, tooltip = "More trades: loose filters, full-day trading, no volume filter - best for active scalping.\nBalanced: middle ground.\nStrict: fewer but cleaner signals (volume 1.5x, lunch hours skipped).\nCustom: uses your own values marked (Custom) below.")
+revOpp = input.bool(false, "Reverse the trade on an opposite signal", group = grpM, tooltip = "If you are in a BUY and a SELL signal appears: close the BUY and take the SELL (and the other way round).")
+
+// ─── Inputs: patterns ──────────────────────────────────────────────────
+grpP = "Patterns (on / off)"
+useORB  = input.bool(true, "1. Opening Range Breakout (ORB)", group = grpP)
+useVWP  = input.bool(true, "2. VWAP Pullback", group = grpP)
+useMPB  = input.bool(true, "3. EMA 9/20 Micro Pullback", group = grpP)
+useFlag = input.bool(true, "4. Bull Flag / Bear Flag", group = grpP)
+useIB   = input.bool(true, "5. Inside Bar Breakout", group = grpP)
+useSwp  = input.bool(true, "6. Liquidity Sweep Reversal", group = grpP)
+useDbl  = input.bool(true, "7. Double Top / Double Bottom", group = grpP)
+
+// ─── Inputs: trade setup ───────────────────────────────────────────────
+grpT = "Trade Setup"
+tradeDir   = input.string("Long & Short", "Trade direction", options = ["Long & Short", "Long only", "Short only"], group = grpT)
+tp1R       = input.float(1.0, "TP1 (x risk)", minval = 0.25, step = 0.25, group = grpT, tooltip = "Risk = distance from Entry to SL. TP1 = 1.0 means TP1 is as far as the SL.")
+tp2Mode    = input.string("Pattern target", "TP2 type", options = ["Pattern target", "Fixed R"], group = grpT, tooltip = "Pattern target: ORB range, flag pole, double-top height, VWAP, swing high.\nIf the pattern target is not beyond TP1, the fixed R value below is used.")
+tp2R       = input.float(2.0, "TP2 (x risk) — fixed / fallback", minval = 0.5, step = 0.25, group = grpT)
+maxTpR     = input.float(3.0, "Max TP2 (x risk)", minval = 1.0, step = 0.5, group = grpT)
+beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = grpT)
+slBufAtr   = input.float(0.1, "SL buffer beyond pattern (x ATR)", minval = 0.0, step = 0.05, group = grpT)
+minRiskAtr = input.float(0.6, "Min SL distance (x ATR)", minval = 0.05, step = 0.05, group = grpT)
+timeStopMin = input.int(15, "Time stop: exit if TP1 not hit within (minutes)", minval = 1, group = grpT, tooltip = "Counted in minutes, so it works the same on 1m, 5m and 15m charts (minimum 3 candles).")
+costPx     = input.float(0.0, "Cost per trade (spread + commission, in price)", minval = 0.0, step = 0.01, group = grpT, tooltip = "Subtracted from every trade's result on the dashboard. Example: 0.03 on a $150 stock, 0.20 on gold. 0 = results before costs.")
+
+// ─── Inputs: filters ───────────────────────────────────────────────────
+grpQ = "Quality Filters (all modes)"
+useTrend  = input.bool(true, "Trend filter: breakouts & pullbacks only with the trend", group = grpQ, tooltip = "BUY only when price is above VWAP and EMA 20 is above EMA 50. SELL only when price is below VWAP and EMA 20 is below EMA 50.\nApplies to ORB, VWAP Pullback, Micro Pullback, Flag and Inside Bar.")
+useChop   = input.bool(true, "Chop filter: skip sideways market, ADX at least", group = grpQ, inline = "chop")
+adxMin    = input.int(20, "", minval = 5, maxval = 50, group = grpQ, inline = "chop", tooltip = "ADX measures trend strength. Below this value the market is moving sideways and breakouts / pullbacks fail more often.")
+noCounter = input.bool(true, "No Sweep / Double Top-Bottom against a strong trend (ADX > 30)", group = grpQ)
+pauseBars = input.int(3, "Pause after a losing trade (bars)", minval = 0, group = grpQ)
+maxLossR  = input.float(3.0, "Stop for the day when today's result reaches -R (0 = off)", minval = 0, step = 0.5, group = grpQ, tooltip = "Daily loss limit. Example 3: once today's trades add up to -3R (three full stop-losses), no more signals until tomorrow.")
+
+grpH = "Session"
+sessMode = input.string("Auto (Indian symbols only)", "Session filter", options = ["Auto (Indian symbols only)", "On", "Off"], group = grpH, tooltip = "Auto: trading hours and square-off are used only on NSE / BSE / MCX symbols. Crypto, forex and US charts trade all day.")
+sess1    = input.session("0920-1510", "Trading hours", group = grpH)
+tz       = input.string("Asia/Kolkata", "Timezone", group = grpH)
+useSq    = input.bool(true, "Square off open trade at", group = grpH, inline = "sq")
+sqH      = input.int(15, "", minval = 0, maxval = 23, group = grpH, inline = "sq")
+sqM      = input.int(15, ":", minval = 0, maxval = 59, group = grpH, inline = "sq")
+
+grpF = "Filters (Custom mode)"
+skipLunch  = input.bool(false, "Skip lunch hours 11:30-13:30", group = grpF)
+maxTrades  = input.int(15, "Max trades per day", minval = 1, group = grpF)
+maxRiskAtr = input.float(2.5, "Max SL distance (x ATR) - wider = skip", minval = 0.5, step = 0.25, group = grpF)
+useVol     = input.bool(true, "Volume filter on breakouts", group = grpF, tooltip = "Applies to ORB, Flag, Inside Bar and Double Top / Bottom. Off automatically on charts without volume (e.g. NSE:NIFTY index - use NIFTY1! futures for volume).")
+volMult    = input.float(1.2, "  Breakout volume >= x average", minval = 0.5, step = 0.1, group = grpF)
+volLen     = input.int(20, "  Volume average length", minval = 5, group = grpF)
+lateAtr    = input.float(1.2, "Skip late breakouts: close beyond level > x ATR", minval = 0.2, step = 0.1, group = grpF)
+useDead    = input.bool(true, "Skip dead market (very low ATR)", group = grpF)
+deadK      = input.float(0.5, "  Dead if ATR < x its 100-bar average", minval = 0.1, step = 0.05, group = grpF)
+
+// ─── Inputs: pattern settings ──────────────────────────────────────────
+grpS = "Pattern Settings"
+orbMin   = input.int(5, "ORB: opening range minutes", minval = 1, group = grpS)
+swL      = input.int(5, "Swings: bars to the left", minval = 2, group = grpS)
+swR      = input.int(2, "Swings: confirmation bars to the right", minval = 1, group = grpS)
+poleAtr  = input.float(1.75, "Flag: min pole size (x ATR) (Custom)", minval = 0.5, step = 0.25, group = grpS)
+poleMax  = input.int(8, "Flag: max pole length (bars)", minval = 2, maxval = 30, group = grpS)
+flagMin  = input.int(3, "Flag: min flag length (bars) (Custom)", minval = 2, maxval = 20, group = grpS)
+flagMax  = input.int(10, "Flag: max flag length (bars)", minval = 3, maxval = 30, group = grpS)
+flagRet  = input.float(0.55, "Flag: max pullback (x pole) (Custom)", minval = 0.2, maxval = 0.9, step = 0.05, group = grpS)
+dblTol   = input.float(0.6, "Double: two tops / bottoms within (x ATR) (Custom)", minval = 0.1, step = 0.1, group = grpS)
+dblMinH  = input.float(0.9, "Double: min height (x ATR) (Custom)", minval = 0.3, step = 0.1, group = grpS)
+swpMax   = input.float(1.0, "Sweep: max poke beyond level (x ATR)", minval = 0.1, step = 0.1, group = grpS)
+swpAge   = input.int(8, "Sweep: level must be at least (bars old) (Custom)", minval = 1, group = grpS)
+swpLook  = input.int(25, "Sweep: swing must be the high/low of last (bars) (Custom)", minval = 5, maxval = 200, group = grpS, tooltip = "Only important swings count as liquidity levels. Previous day high/low and ORB high/low always count.")
+
+// ─── Inputs: style ─────────────────────────────────────────────────────
+grpV = "Style"
+showVWAP = input.bool(true, "Show VWAP", group = grpV)
+showEMA  = input.bool(true, "Show EMA 9 / EMA 20", group = grpV)
+showLvls = input.bool(true, "Show ORB high/low and previous day high/low", group = grpV)
+showPat  = input.bool(true, "Draw the pattern (flag, M/W, inside bar, sweep)", group = grpV)
+showTrd  = input.bool(true, "Show Entry / SL / TP1 / TP2 lines", group = grpV)
+showBg   = input.bool(true, "Highlight the BUY / SELL candle", group = grpV)
+showSkip = input.bool(false, "Show skipped signals (late, low volume, SL too wide)", group = grpV)
+showDash = input.bool(true, "Show dashboard", group = grpV)
+buyCol   = input.color(#089981, "BUY color", group = grpV)
+sellCol  = input.color(#F23645, "SELL color", group = grpV)
+lineCol  = input.color(#131722, "Pattern line color", group = grpV)
+autoCol  = input.bool(true, "Light lines on dark chart background", group = grpV)
+
+// ─── Colors ────────────────────────────────────────────────────────────
+bgLum  = color.r(chart.bg_color) * 0.299 + color.g(chart.bg_color) * 0.587 + color.b(chart.bg_color) * 0.114
+bgDark = bgLum < 128
+cLine  = autoCol and bgDark ? #D1D4DC : lineCol
+noBg   = color.new(color.black, 100)
+
+// ─── Effective settings for the chosen mode ────────────────────────────
+isMore = mode == "More trades"
+isBal  = mode == "Balanced"
+isStr  = mode == "Strict"
+f_m(float m, float b, float st, float c) =>
+    isMore ? m : isBal ? b : isStr ? st : c
+f_mi(int m, int b, int st, int c) =>
+    isMore ? m : isBal ? b : isStr ? st : c
+
+eUseVol   = isMore ? false : isBal or isStr ? true : useVol
+eVolMult  = f_m(1.0, 1.2, 1.5, volMult)
+eLate     = f_m(1.5, 1.2, 1.0, lateAtr)
+eMaxRisk  = f_m(3.0, 2.5, 2.0, maxRiskAtr)
+eUseDead  = isMore ? false : isBal or isStr ? true : useDead
+eMaxTr    = f_mi(30, 15, 8, maxTrades)
+eSkipLun  = isStr ? true : isMore or isBal ? false : skipLunch
+ePole     = f_m(1.5, 1.75, 2.0, poleAtr)
+eFlagMin  = f_mi(2, 3, 3, flagMin)
+eFlagRet  = f_m(0.6, 0.55, 0.5, flagRet)
+eDblTol   = f_m(0.7, 0.6, 0.5, dblTol)
+eDblMinH  = f_m(0.8, 0.9, 1.0, dblMinH)
+eSwpAge   = f_mi(5, 8, 10, swpAge)
+eSwpLook  = f_mi(20, 25, 30, swpLook)
+eSwpWick  = f_m(0.4, 0.45, 0.5, 0.45)
+eVpN      = f_mi(3, 4, 5, 4)
+eVpDrive  = f_m(0.5, 0.75, 1.0, 0.75)
+eVpTouch  = f_m(0.3, 0.2, 0.15, 0.2)
+eVpGreen  = isStr
+eMpSep    = f_m(0.1, 0.15, 0.2, 0.15)
+eMpVwap   = not isMore
+eMpTouch  = f_m(0.3, 0.2, 0.1, 0.2)
+eIbMin    = f_m(0.3, 0.4, 0.5, 0.4)
+eIbEma    = not isMore
+
+tfMin  = timeframe.in_seconds() / 60.0
+tsBars = math.max(3, int(math.round(timeStopMin / tfMin)))
+
+// ─── Core series (computed on every bar) ───────────────────────────────
+atrV   = ta.atr(14)
+atrAvg = ta.sma(atrV, 100)
+ema9   = ta.ema(close, 9)
+ema20  = ta.ema(close, 20)
+ema50  = ta.ema(close, 50)
+[diP, diM, adxV] = ta.dmi(14, 14)
+hasVol = ta.cum(nz(volume)) > 0
+volAvg = ta.sma(nz(volume), volLen)
+volOk  = not eUseVol or not hasVol or nz(volume) >= eVolMult * volAvg
+notDead = not eUseDead or na(atrAvg) or atrV >= deadK * atrAvg
+hh20   = ta.highest(high, 20)
+ll20   = ta.lowest(low, 20)
+hhS    = ta.highest(high, eSwpLook)
+llS    = ta.lowest(low, eSwpLook)
+
+tD = time("D")
+newDay = bar_index == 0 or tD != tD[1]
+
+// Session VWAP (falls back to the session average price if the chart has no volume)
+var float sPV = 0.0
+var float sV  = 0.0
+var float sP  = 0.0
+var int   sN  = 0
+if newDay
+    sPV := 0.0
+    sV := 0.0
+    sP := 0.0
+    sN := 0
+sPV += hlc3 * nz(volume)
+sV += nz(volume)
+sP += hlc3
+sN += 1
+vwapV = sV > 0 ? sPV / sV : sP / sN
+
+dV    = close - vwapV
+minDV = ta.lowest(dV, eVpN)
+maxDV = ta.highest(dV, eVpN)
+hiAbv = ta.highest(high - vwapV, 15)
+loBlw = ta.lowest(low - vwapV, 15)
+
+// Sessions / clock
+isIndia = syminfo.timezone == "Asia/Kolkata"
+sessOn  = sessMode == "On" or (sessMode == "Auto (Indian symbols only)" and isIndia)
+nowMin  = hour(time, tz) * 60 + minute(time, tz)
+inMain  = not na(time(timeframe.period, sess1, tz))
+inLunch = nowMin >= 11 * 60 + 30 and nowMin < 13 * 60 + 30
+inSess  = not sessOn or (inMain and not (eSkipLun and inLunch))
+sqNow   = sessOn and useSq and nowMin >= sqH * 60 + sqM
+
+// ─── Helpers ───────────────────────────────────────────────────────────
+f_dirOk(int d) =>
+    tradeDir == "Long & Short" or (d == 1 and tradeDir == "Long only") or (d == -1 and tradeDir == "Short only")
+
+f_px(float p) =>
+    str.tostring(p, format.mintick)
+
+// ─── Day levels & opening range ────────────────────────────────────────
+var float dayH = na
+var float dayL = na
+var float pdh  = na
+var float pdl  = na
+var int   dayOpenT = na
+var int   dayOpenB = na
+var float orH  = na
+var float orL  = na
+var bool  orDone = false
+var bool  orbUpUsed = false
+var bool  orbDnUsed = false
+var int   tradesToday = 0
+var int   winsToday = 0
+var int   lossToday = 0
+var float rToday = 0.0
+bool orJustDone = false
+
+var line lnOrH = na
+var line lnOrL = na
+var line lnPdh = na
+var line lnPdl = na
+
+if newDay
+    pdh := dayH
+    pdl := dayL
+    dayH := high
+    dayL := low
+    dayOpenT := time
+    dayOpenB := bar_index
+    orH := high
+    orL := low
+    orDone := false
+    orbUpUsed := false
+    orbDnUsed := false
+    tradesToday := 0
+    winsToday := 0
+    lossToday := 0
+    rToday := 0.0
+    lnOrH := na
+    lnOrL := na
+    lnPdh := na
+    lnPdl := na
+    if showLvls and not na(pdh)
+        lnPdh := line.new(bar_index, pdh, bar_index, pdh, color = color.new(cLine, 40), style = line.style_dotted, width = 1)
+        lnPdl := line.new(bar_index, pdl, bar_index, pdl, color = color.new(cLine, 40), style = line.style_dotted, width = 1)
+        label.new(bar_index, pdh, "PDH", color = noBg, style = label.style_label_lower_left, textcolor = color.new(cLine, 30), size = size.tiny)
+        label.new(bar_index, pdl, "PDL", color = noBg, style = label.style_label_upper_left, textcolor = color.new(cLine, 30), size = size.tiny)
+else
+    dayH := math.max(dayH, high)
+    dayL := math.min(dayL, low)
+    if not orDone
+        if time < dayOpenT + orbMin * 60000
+            orH := math.max(orH, high)
+            orL := math.min(orL, low)
+        else
+            orDone := true
+            orJustDone := true
+
+if orJustDone and showLvls
+    lnOrH := line.new(dayOpenB, orH, bar_index, orH, color = cLine, style = line.style_dashed, width = 1)
+    lnOrL := line.new(dayOpenB, orL, bar_index, orL, color = cLine, style = line.style_dashed, width = 1)
+    label.new(dayOpenB, orH, "ORB High", color = noBg, style = label.style_label_lower_left, textcolor = cLine, size = size.tiny)
+    label.new(dayOpenB, orL, "ORB Low", color = noBg, style = label.style_label_upper_left, textcolor = cLine, size = size.tiny)
+
+if not na(lnOrH)
+    line.set_x2(lnOrH, bar_index)
+    line.set_x2(lnOrL, bar_index)
+if not na(lnPdh)
+    line.set_x2(lnPdh, bar_index)
+    line.set_x2(lnPdl, bar_index)
+
+// ─── Swings (zig-zag) ──────────────────────────────────────────────────
+var float[] zP = array.new_float()
+var int[]   zB = array.new_int()
+var int[]   zD = array.new_int()
+
+f_add(float[] ps, int[] bs, int[] ds, float p, int b, int d) =>
+    int cnt = array.size(ps)
+    bool isNew = false
+    int lastDir = 0
+    if cnt > 0
+        lastDir := array.get(ds, cnt - 1)
+    if lastDir == d
+        float last = array.get(ps, cnt - 1)
+        if (d == 1 and p > last) or (d == -1 and p < last)
+            array.set(ps, cnt - 1, p)
+            array.set(bs, cnt - 1, b)
+    else
+        array.push(ps, p)
+        array.push(bs, b)
+        array.push(ds, d)
+        isNew := true
+        if array.size(ps) > 50
+            array.shift(ps)
+            array.shift(bs)
+            array.shift(ds)
+    isNew
+
+// Safe readers (i = 0 is the newest swing)
+f_p(int i) =>
+    int idx = array.size(zP) - 1 - i
+    float v = na
+    if idx >= 0 and i >= 0
+        v := array.get(zP, idx)
+    v
+f_b(int i) =>
+    int idx = array.size(zB) - 1 - i
+    int v = na
+    if idx >= 0 and i >= 0
+        v := array.get(zB, idx)
+    v
+f_d(int i) =>
+    int idx = array.size(zD) - 1 - i
+    int v = 0
+    if idx >= 0 and i >= 0
+        v := array.get(zD, idx)
+    v
+
+ph = ta.pivothigh(high, swL, swR)
+pl = ta.pivotlow(low, swL, swR)
+
+bool newHi = false
+bool newLo = false
+if not na(ph)
+    newHi := f_add(zP, zB, zD, ph, bar_index - swR, 1)
+if not na(pl)
+    newLo := f_add(zP, zB, zD, pl, bar_index - swR, -1)
+int zn = array.size(zP)
+
+// ─── Liquidity levels for sweeps (swing highs/lows, PDH/PDL, ORB H/L) ──
+var float[]  hLv = array.new_float()
+var int[]    hLb = array.new_int()
+var string[] hLt = array.new_string()
+var float[]  lLv = array.new_float()
+var int[]    lLb = array.new_int()
+var string[] lLt = array.new_string()
+
+f_push(float[] lv, int[] lb, string[] lt, float p, int b, string t) =>
+    array.push(lv, p)
+    array.push(lb, b)
+    array.push(lt, t)
+    if array.size(lv) > 12
+        array.shift(lv)
+        array.shift(lb)
+        array.shift(lt)
+    true
+
+if not na(ph) and ph >= hhS
+    f_push(hLv, hLb, hLt, ph, bar_index - swR, "Swing High")
+if not na(pl) and pl <= llS
+    f_push(lLv, lLb, lLt, pl, bar_index - swR, "Swing Low")
+if newDay and not na(pdh)
+    f_push(hLv, hLb, hLt, pdh, bar_index, "Prev Day High")
+    f_push(lLv, lLb, lLt, pdl, bar_index, "Prev Day Low")
+if orJustDone
+    f_push(hLv, hLb, hLt, orH, dayOpenB, "ORB High")
+    f_push(lLv, lLb, lLt, orL, dayOpenB, "ORB Low")
+
+int   swpDir  = 0
+float swpLvl  = na
+int   swpFrom = na
+string swpName = ""
+float rng = high - low
+bool rejDn = rng > 0 and ((high - math.max(open, close)) >= eSwpWick * rng or (close < open and close <= (high + low) / 2 and close < low[1]))
+bool rejUp = rng > 0 and ((math.min(open, close) - low) >= eSwpWick * rng or (close > open and close >= (high + low) / 2 and close > high[1]))
+
+int nH = array.size(hLv)
+if nH > 0
+    for i = nH - 1 to 0
+        float lv = array.get(hLv, i)
+        if close > lv
+            array.remove(hLv, i)
+            array.remove(hLb, i)
+            array.remove(hLt, i)
+        else if high > lv
+            if swpDir == 0 and rejDn and high - lv <= swpMax * atrV and bar_index - array.get(hLb, i) >= eSwpAge
+                swpDir := -1
+                swpLvl := lv
+                swpFrom := array.get(hLb, i)
+                swpName := array.get(hLt, i)
+            array.remove(hLv, i)
+            array.remove(hLb, i)
+            array.remove(hLt, i)
+
+int nL = array.size(lLv)
+if nL > 0
+    for i = nL - 1 to 0
+        float lv = array.get(lLv, i)
+        if close < lv
+            array.remove(lLv, i)
+            array.remove(lLb, i)
+            array.remove(lLt, i)
+        else if low < lv
+            if swpDir == 0 and rejUp and lv - low <= swpMax * atrV and bar_index - array.get(lLb, i) >= eSwpAge
+                swpDir := 1
+                swpLvl := lv
+                swpFrom := array.get(lLb, i)
+                swpName := array.get(lLt, i)
+            array.remove(lLv, i)
+            array.remove(lLb, i)
+            array.remove(lLt, i)
+
+// ─── Double Top / Double Bottom (waiting for the neckline break) ───────
+var bool  dtOn = false
+var float dtNeck = na
+var float dtTop = na
+var int   dtB1 = na
+var float dtP1 = na
+var int   dtBN = na
+var int   dtB2 = na
+var float dtP2 = na
+var int   dtExp = na
+
+var bool  dbOn = false
+var float dbNeck = na
+var float dbBot = na
+var int   dbB1 = na
+var float dbP1 = na
+var int   dbBN = na
+var int   dbB2 = na
+var float dbP2 = na
+var int   dbExp = na
+
+if newHi and zn >= 4 and f_d(0) == 1
+    float h2 = f_p(0)
+    float h1 = f_p(2)
+    float nk = f_p(1)
+    float top = math.max(h1, h2)
+    int gap = f_b(0) - f_b(2)
+    // reversal context: price rose into the first top (swing low before it is under the neckline)
+    if math.abs(h1 - h2) <= eDblTol * atrV and top - nk >= eDblMinH * atrV and gap >= 3 and gap <= 80 and f_p(3) < nk
+        dtOn := true
+        dtNeck := nk
+        dtTop := top
+        dtB1 := f_b(2)
+        dtP1 := h1
+        dtBN := f_b(1)
+        dtB2 := f_b(0)
+        dtP2 := h2
+        dtExp := bar_index + 30
+
+if newLo and zn >= 4 and f_d(0) == -1
+    float l2 = f_p(0)
+    float l1 = f_p(2)
+    float nk = f_p(1)
+    float bot = math.min(l1, l2)
+    int gap = f_b(0) - f_b(2)
+    // reversal context: price fell into the first bottom
+    if math.abs(l1 - l2) <= eDblTol * atrV and nk - bot >= eDblMinH * atrV and gap >= 3 and gap <= 80 and f_p(3) > nk
+        dbOn := true
+        dbNeck := nk
+        dbBot := bot
+        dbB1 := f_b(2)
+        dbP1 := l1
+        dbBN := f_b(1)
+        dbB2 := f_b(0)
+        dbP2 := l2
+        dbExp := bar_index + 30
+
+bool dtSig = false
+bool dbSig = false
+if dtOn
+    if close > dtTop or bar_index > dtExp
+        dtOn := false
+    else if close < dtNeck
+        dtSig := true
+        dtOn := false
+if dbOn
+    if close < dbBot or bar_index > dbExp
+        dbOn := false
+    else if close > dbNeck
+        dbSig := true
+        dbOn := false
+
+// ─── Bull / Bear Flag ──────────────────────────────────────────────────
+// Flag = bars 1..fl, pole top/bottom = bar fl+1, pole start = up to poleMax bars before that
+f_flag(int dir) =>
+    bool ok = false
+    float trig = na
+    float slRef = na
+    float poleH = na
+    int topOff = na
+    int startOff = na
+    float topP = na
+    float startP = na
+    float fHiR = na
+    float fLoR = na
+    for fl = eFlagMin to flagMax
+        float fHi = high[1]
+        float fLo = low[1]
+        for k = 1 to fl
+            fHi := math.max(fHi, high[k])
+            fLo := math.min(fLo, low[k])
+        float top = dir == 1 ? high[fl + 1] : low[fl + 1]
+        bool topOk = dir == 1 ? top > fHi : top < fLo
+        if topOk and not na(top)
+            float pS = dir == 1 ? low[fl + 1] : high[fl + 1]
+            int pOff = fl + 1
+            for k = fl + 2 to fl + 1 + poleMax
+                if dir == 1 and low[k] < pS
+                    pS := low[k]
+                    pOff := k
+                if dir == -1 and high[k] > pS
+                    pS := high[k]
+                    pOff := k
+            float pH = dir == 1 ? top - pS : pS - top
+            float ret = dir == 1 ? top - fLo : fHi - top
+            bool brk = dir == 1 ? close > fHi : close < fLo
+            if pH >= ePole * atrV and ret <= eFlagRet * pH and fHi - fLo <= 0.6 * pH and brk
+                ok := true
+                trig := dir == 1 ? fHi : fLo
+                slRef := dir == 1 ? fLo : fHi
+                poleH := pH
+                topOff := fl + 1
+                startOff := pOff
+                topP := top
+                startP := pS
+                fHiR := fHi
+                fLoR := fLo
+                break
+    [ok, trig, slRef, poleH, topOff, startOff, topP, startP, fHiR, fLoR]
+
+[bfOk, bfTrig, bfSL, bfPole, bfTopO, bfStO, bfTopP, bfStP, bfHi, bfLo] = f_flag(1)
+[sfOk, sfTrig, sfSL, sfPole, sfTopO, sfStO, sfTopP, sfStP, sfHi, sfLo] = f_flag(-1)
+
+// ─── Micro pullback: count the pullback candles before this bar ────────
+int nRed = 0
+int nGrn = 0
+for i = 1 to 3
+    if close[i] < open[i]
+        nRed += 1
+    else
+        break
+for i = 1 to 3
+    if close[i] > open[i]
+        nGrn += 1
+    else
+        break
+
+bool mpTouchL = false
+bool mpHoldL = true
+float mpLowL = na
+if nRed > 0
+    mpLowL := low[1]
+    for i = 1 to nRed
+        mpLowL := math.min(mpLowL, low[i])
+        if low[i] <= ema9[i] + eMpTouch * atrV
+            mpTouchL := true
+        if close[i] <= ema20[i]
+            mpHoldL := false
+
+bool mpTouchS = false
+bool mpHoldS = true
+float mpHighS = na
+if nGrn > 0
+    mpHighS := high[1]
+    for i = 1 to nGrn
+        mpHighS := math.max(mpHighS, high[i])
+        if high[i] >= ema9[i] - eMpTouch * atrV
+            mpTouchS := true
+        if close[i] >= ema20[i]
+            mpHoldS := false
+
+// ═══ Pick the signal for this bar (first match wins) ═══════════════════
+int    cDir = 0
+string cName = ""
+string cShort = ""
+float  cTrig = na
+float  cSLr = na
+float  cSLalt = na   // tighter stop used if the normal one is too wide
+float  cPT = na
+bool   cBrk = false
+string cTag = ""
+// pattern drawing data
+array<chart.point> cPts = array.new<chart.point>()
+int   cBx1 = na
+float cBy1 = na
+int   cBx2 = na
+float cBy2 = na
+int   cLvX = na
+float cLvY = na
+
+// 1. Opening Range Breakout
+bool orbUp = orDone and not orbUpUsed and close > orH and close[1] <= orH
+bool orbDn = orDone and not orbDnUsed and close < orL and close[1] >= orL
+if orbUp
+    orbUpUsed := true
+if orbDn
+    orbDnUsed := true
+if useORB and cDir == 0
+    if orbUp and close > vwapV and f_dirOk(1)
+        cDir := 1
+        cTrig := orH
+        cPT := orH + (orH - orL)
+    else if orbDn and close < vwapV and f_dirOk(-1)
+        cDir := -1
+        cTrig := orL
+        cPT := orL - (orH - orL)
+    if cDir != 0
+        cName := "Opening Range Breakout"
+        cShort := "ORB"
+        cSLr := (orH + orL) / 2
+        cBrk := true
+
+// 6. Liquidity Sweep Reversal
+if useSwp and cDir == 0 and swpDir != 0 and f_dirOk(swpDir)
+    cDir := swpDir
+    cName := "Liquidity Sweep Reversal"
+    cShort := "Sweep"
+    cTrig := swpLvl
+    cSLr := swpDir == 1 ? low : high
+    cPT := (swpDir == 1 and vwapV > close) or (swpDir == -1 and vwapV < close) ? vwapV : na
+    cLvX := swpFrom
+    cLvY := swpLvl
+    cTag := "Sweep of " + swpName
+
+// 7. Double Top / Double Bottom
+if useDbl and cDir == 0
+    if dtSig and f_dirOk(-1)
+        cDir := -1
+        cName := "Double Top"
+        cShort := "Double Top"
+        cTrig := dtNeck
+        cSLr := dtTop
+        cSLalt := (dtTop + dtNeck) / 2
+        cPT := dtNeck - (dtTop - dtNeck)
+        cBrk := true
+        array.push(cPts, chart.point.from_index(dtB1, dtP1))
+        array.push(cPts, chart.point.from_index(dtBN, dtNeck))
+        array.push(cPts, chart.point.from_index(dtB2, dtP2))
+        array.push(cPts, chart.point.from_index(bar_index, close))
+        cLvX := dtB1
+        cLvY := dtNeck
+        cTag := "Neckline"
+    else if dbSig and f_dirOk(1)
+        cDir := 1
+        cName := "Double Bottom"
+        cShort := "Double Bottom"
+        cTrig := dbNeck
+        cSLr := dbBot
+        cSLalt := (dbBot + dbNeck) / 2
+        cPT := dbNeck + (dbNeck - dbBot)
+        cBrk := true
+        array.push(cPts, chart.point.from_index(dbB1, dbP1))
+        array.push(cPts, chart.point.from_index(dbBN, dbNeck))
+        array.push(cPts, chart.point.from_index(dbB2, dbP2))
+        array.push(cPts, chart.point.from_index(bar_index, close))
+        cLvX := dbB1
+        cLvY := dbNeck
+        cTag := "Neckline"
+
+// 4. Bull / Bear Flag
+if useFlag and cDir == 0
+    if bfOk and f_dirOk(1)
+        cDir := 1
+        cName := "Bull Flag"
+        cShort := "Bull Flag"
+        cTrig := bfTrig
+        cSLr := bfSL
+        cSLalt := (bfHi + bfLo) / 2
+        cPT := close + bfPole
+        array.push(cPts, chart.point.from_index(bar_index - bfStO, bfStP))
+        array.push(cPts, chart.point.from_index(bar_index - bfTopO, bfTopP))
+        cBx1 := bar_index - bfTopO
+        cBy1 := bfHi
+        cBx2 := bar_index - 1
+        cBy2 := bfLo
+        cBrk := true
+    else if sfOk and f_dirOk(-1)
+        cDir := -1
+        cName := "Bear Flag"
+        cShort := "Bear Flag"
+        cTrig := sfTrig
+        cSLr := sfSL
+        cSLalt := (sfHi + sfLo) / 2
+        cPT := close - sfPole
+        array.push(cPts, chart.point.from_index(bar_index - sfStO, sfStP))
+        array.push(cPts, chart.point.from_index(bar_index - sfTopO, sfTopP))
+        cBx1 := bar_index - sfTopO
+        cBy1 := sfHi
+        cBx2 := bar_index - 1
+        cBy2 := sfLo
+        cBrk := true
+
+// 2. VWAP Pullback
+bool vpL = minDV[1] > 0 and hiAbv[1] >= eVpDrive * atrV and low[1] <= vwapV[1] + eVpTouch * atrV and (close[1] > open[1] or not eVpGreen) and close > high[1] and close > open and ema9 > ema20
+bool vpS = maxDV[1] < 0 and loBlw[1] <= -eVpDrive * atrV and high[1] >= vwapV[1] - eVpTouch * atrV and (close[1] < open[1] or not eVpGreen) and close < low[1] and close < open and ema9 < ema20
+if useVWP and cDir == 0
+    if vpL and f_dirOk(1)
+        cDir := 1
+        cTrig := high[1]
+        cSLr := low[1]
+        cPT := hh20[1]
+    else if vpS and f_dirOk(-1)
+        cDir := -1
+        cTrig := low[1]
+        cSLr := high[1]
+        cPT := ll20[1]
+    if cDir != 0
+        cName := "VWAP Pullback"
+        cShort := "VWAP Pullback"
+
+// 3. EMA 9/20 Micro Pullback
+bool trendUp = ema9 > ema20 and ema9 - ema20 >= eMpSep * atrV and ema20 > ema20[3] and (close > vwapV or not eMpVwap)
+bool trendDn = ema9 < ema20 and ema20 - ema9 >= eMpSep * atrV and ema20 < ema20[3] and (close < vwapV or not eMpVwap)
+bool mpL = nRed >= 1 and close[nRed + 1] > open[nRed + 1] and mpTouchL and mpHoldL and trendUp and close > high[1] and close > open
+bool mpS = nGrn >= 1 and close[nGrn + 1] < open[nGrn + 1] and mpTouchS and mpHoldS and trendDn and close < low[1] and close < open
+if useMPB and cDir == 0
+    if mpL and f_dirOk(1)
+        cDir := 1
+        cTrig := high[1]
+        cSLr := mpLowL
+        cPT := hh20[1]
+    else if mpS and f_dirOk(-1)
+        cDir := -1
+        cTrig := low[1]
+        cSLr := mpHighS
+        cPT := ll20[1]
+    if cDir != 0
+        cName := "EMA 9/20 Micro Pullback"
+        cShort := "Micro Pullback"
+
+// 5. Inside Bar Breakout (1 or 2 inside bars)
+bool ib2 = high[1] <= high[3] and low[1] >= low[3] and high[2] <= high[3] and low[2] >= low[3]
+bool ib1 = high[1] <= high[2] and low[1] >= low[2]
+int   ibOff = ib2 ? 3 : 2
+float ibH = ib2 ? high[3] : high[2]
+float ibL = ib2 ? low[3] : low[2]
+float ibInL = ib2 ? math.min(low[1], low[2]) : low[1]
+float ibInH = ib2 ? math.max(high[1], high[2]) : high[1]
+bool ibOk = (ib1 or ib2) and ibH - ibL >= eIbMin * atrV
+if useIB and cDir == 0 and ibOk
+    if close > ibH and (eIbEma ? ema9 > ema20 : close > ema20) and f_dirOk(1)
+        cDir := 1
+        cTrig := ibH
+        cSLr := ibL
+        cSLalt := ibInL
+    else if close < ibL and (eIbEma ? ema9 < ema20 : close < ema20) and f_dirOk(-1)
+        cDir := -1
+        cTrig := ibL
+        cSLr := ibH
+        cSLalt := ibInH
+    if cDir != 0
+        cName := "Inside Bar Breakout"
+        cShort := "Inside Bar"
+        cBrk := true
+        cBx1 := bar_index - ibOff
+        cBy1 := ibH
+        cBx2 := bar_index - 1
+        cBy2 := ibL
+
+// Pattern id: 1 ORB, 2 VWAP Pullback, 3 Micro Pullback, 4 Flag, 5 Inside Bar, 6 Sweep, 7 Double Top/Bottom
+int  cPat  = cShort == "ORB" ? 1 : cShort == "VWAP Pullback" ? 2 : cShort == "Micro Pullback" ? 3 : (cShort == "Bull Flag" or cShort == "Bear Flag") ? 4 : cShort == "Inside Bar" ? 5 : cShort == "Sweep" ? 6 : cShort != "" ? 7 : 0
+bool cCont = cPat >= 1 and cPat <= 5
+bool trUpQ = close > vwapV and ema20 > ema50
+bool trDnQ = close < vwapV and ema20 < ema50
+bool chopOk = not useChop or adxV >= adxMin
+
+f_pname(int id) =>
+    id == 1 ? "ORB" : id == 2 ? "VWAP Pullback" : id == 3 ? "Micro Pullback" : id == 4 ? "Flag" : id == 5 ? "Inside Bar" : id == 6 ? "Sweep" : "Double Top/Bottom"
+
+// ═══ Trade state ═══════════════════════════════════════════════════════
+var int    trDir = 0
+var float  trEn = na
+var float  trSL = na
+var float  trTP1 = na
+var float  trTP2 = na
+var float  trRisk = na
+var int    trBar = na
+var bool   trT1 = false
+var string trName = ""
+var int    trPat = 0
+var int    pauseUntil = -1
+var int[]   patN = array.new_int(8, 0)
+var int[]   patW = array.new_int(8, 0)
+var float[] patR = array.new_float(8, 0.0)
+var line   lnE = na
+var line   lnS = na
+var line   lnT1 = na
+var line   lnT2 = na
+var label  lbE = na
+var label  lbS = na
+var label  lbT1 = na
+var label  lbT2 = na
+
+var int   totN = 0
+var int   totW = 0
+var int   totL = 0
+var float totR = 0.0
+
+// ─── Check the new signal against the filters ──────────────────────────
+string why = ""
+float  sl = na
+float  risk = na
+bool   candOk = false
+if cDir != 0
+    sl := cSLr - cDir * slBufAtr * atrV
+    risk := cDir * (close - sl)
+    if risk > eMaxRisk * atrV and not na(cSLalt)
+        sl := cSLalt - cDir * slBufAtr * atrV
+        risk := cDir * (close - sl)
+    if risk < minRiskAtr * atrV
+        risk := minRiskAtr * atrV
+        sl := close - cDir * risk
+    if cCont and useTrend and not (cDir == 1 ? trUpQ : trDnQ)
+        why := "against trend"
+    else if cCont and not chopOk
+        why := "sideways market"
+    else if not cCont and noCounter and adxV > 30 and (cDir == 1 ? trDnQ : trUpQ)
+        why := "against strong trend"
+    else if cBrk and not volOk
+        why := "low volume"
+    else if not na(cTrig) and cBrk and cDir * (close - cTrig) > eLate * atrV
+        why := "late breakout"
+    else if risk > eMaxRisk * atrV
+        why := "SL too wide"
+    candOk := why == "" and tradesToday < eMaxTr and not sqNow and inSess and notDead and bar_index >= pauseUntil and (maxLossR == 0 or rToday > -maxLossR)
+
+// ─── Manage the open trade ─────────────────────────────────────────────
+bool exitNow = false
+bool revNow = false
+if trDir != 0 and bar_index > trBar
+    bool slHit = trDir == 1 ? low <= trSL : high >= trSL
+    bool t2Hit = trDir == 1 ? high >= trTP2 : low <= trTP2
+    string ex = ""
+    float exP = na
+    color exC = cLine
+    if slHit
+        ex := trT1 ? "Breakeven exit" : "SL hit ✗"
+        // v2: if the candle opened beyond the stop (gap), the stop fills at the open
+        exP := (trDir == 1 ? open < trSL : open > trSL) ? open : trSL
+        exC := trT1 ? cLine : sellCol
+    else
+        if not trT1 and (trDir == 1 ? high >= trTP1 : low <= trTP1)
+            trT1 := true
+            label.new(bar_index, trTP1, "TP1 ✓", color = noBg, style = label.style_label_left, textcolor = buyCol, size = size.small)
+            if beAfterTp1
+                trSL := trEn
+                if not na(lnS)
+                    line.set_y1(lnS, trEn)
+                    line.set_y2(lnS, trEn)
+                    label.set_y(lbS, trEn)
+                    label.set_text(lbS, "SL → Entry")
+        if t2Hit
+            ex := "TP2 hit ✓"
+            exP := trTP2
+            exC := buyCol
+        else if sqNow
+            ex := "Square-off"
+            exP := close
+        else if not trT1 and bar_index - trBar >= tsBars
+            ex := "Time exit"
+            exP := close
+        else if bar_index - trBar >= 4 * tsBars
+            ex := "Time exit"
+            exP := close
+        else if revOpp and candOk and cDir == -trDir
+            ex := "Reversed ⇄"
+            exP := close
+            revNow := true
+    if not na(lnE)
+        int x2 = ex != "" ? bar_index : bar_index + 3
+        line.set_x2(lnE, x2)
+        line.set_x2(lnS, x2)
+        line.set_x2(lnT1, x2)
+        line.set_x2(lnT2, x2)
+        label.set_x(lbE, x2)
+        label.set_x(lbS, x2)
+        label.set_x(lbT1, x2)
+        label.set_x(lbT2, x2)
+    if ex != ""
+        float exR = trDir * (exP - trEn) / trRisk
+        float rRes = (trT1 ? 0.5 * tp1R + 0.5 * exR : exR) - costPx / trRisk
+        totN += 1
+        totR += rRes
+        rToday += rRes
+        array.set(patN, trPat, array.get(patN, trPat) + 1)
+        array.set(patR, trPat, array.get(patR, trPat) + rRes)
+        if rRes > 0
+            totW += 1
+            winsToday += 1
+            array.set(patW, trPat, array.get(patW, trPat) + 1)
+        else
+            totL += 1
+            lossToday += 1
+            pauseUntil := bar_index + pauseBars
+        label.new(bar_index, exP, ex + " (" + (rRes >= 0 ? "+" : "") + str.tostring(rRes, "#.##") + "R)", color = noBg, style = label.style_label_left, textcolor = exC, size = size.small)
+        alert((trDir == 1 ? "LONG " : "SHORT ") + trName + ": " + ex + " on " + syminfo.ticker, alert.freq_once_per_bar_close)
+        trDir := 0
+        exitNow := true
+
+// ─── Accept or skip the new signal ─────────────────────────────────────
+bool buySig = false
+bool sellSig = false
+// v2: barstate.isconfirmed = only on a closed candle; revNow = a reversal is not blocked by the loss pause
+if barstate.isconfirmed and cDir != 0 and trDir == 0 and tradesToday < eMaxTr and not sqNow and inSess and notDead and (bar_index >= pauseUntil or revNow) and (maxLossR == 0 or rToday > -maxLossR)
+    if why != ""
+        if showSkip
+            label.new(bar_index, cDir == 1 ? low : high, cShort + ": skipped (" + why + ")", color = noBg, style = cDir == 1 ? label.style_label_up : label.style_label_down, textcolor = color.gray, size = size.tiny)
+    else
+        float en = close
+        float tp1 = en + cDir * tp1R * risk
+        float tp2 = en + cDir * tp2R * risk
+        if tp2Mode == "Pattern target" and not na(cPT) and cDir * (cPT - tp1) > 0
+            tp2 := cPT
+        if cDir * (tp2 - en) > maxTpR * risk
+            tp2 := en + cDir * maxTpR * risk
+        if cDir * (tp2 - tp1) <= 0
+            tp2 := en + cDir * math.max(tp2R, tp1R + 0.5) * risk
+        color sc = cDir == 1 ? buyCol : sellCol
+        string side = cDir == 1 ? "BUY" : "SELL"
+        string tip = side + " · " + cName + "\nEntry: " + f_px(en) + "\nSL: " + f_px(sl) + "\nTP1: " + f_px(tp1) + " (" + str.tostring(tp1R) + "R)\nTP2: " + f_px(tp2) + " (" + str.tostring(cDir * (tp2 - en) / risk, "#.#") + "R)"
+        // pattern drawing
+        if showPat
+            int np = array.size(cPts)
+            if np >= 2
+                for i = 0 to np - 2
+                    chart.point a = array.get(cPts, i)
+                    chart.point b = array.get(cPts, i + 1)
+                    line.new(a.index, a.price, b.index, b.price, color = cLine, width = 2)
+            if not na(cBx1)
+                box.new(cBx1, cBy1, cBx2, cBy2, border_color = cLine, border_width = 1, bgcolor = color.new(cLine, 90))
+            if not na(cLvX)
+                line.new(cLvX, cLvY, bar_index, cLvY, color = cLine, style = line.style_dashed, width = 1)
+                if cTag != ""
+                    label.new(cLvX, cLvY, cTag, color = noBg, style = cDir == -1 ? label.style_label_lower_left : label.style_label_upper_left, textcolor = cLine, size = size.tiny)
+        // marker where price crossed the trigger level
+        label.new(bar_index, na(cTrig) ? close : cTrig, "", color = sc, style = label.style_circle, size = size.tiny, tooltip = cName)
+        // BUY / SELL box on the trigger candle
+        label.new(bar_index, cDir == 1 ? low - 0.25 * atrV : high + 0.25 * atrV, (cDir == 1 ? "BUY ▲ " : "SELL ▼ ") + cShort, color = sc, style = cDir == 1 ? label.style_label_up : label.style_label_down, textcolor = color.white, size = size.normal, tooltip = tip)
+        // trade lines
+        lnE := na
+        if showTrd
+            int x2 = bar_index + 3
+            lnE := line.new(bar_index, en, x2, en, color = cLine, style = line.style_dotted, width = 1)
+            lnS := line.new(bar_index, sl, x2, sl, color = sellCol, style = line.style_dashed, width = 1)
+            lnT1 := line.new(bar_index, tp1, x2, tp1, color = buyCol, style = line.style_dashed, width = 1)
+            lnT2 := line.new(bar_index, tp2, x2, tp2, color = buyCol, style = line.style_solid, width = 1)
+            lbE := label.new(x2, en, "Entry " + f_px(en), color = noBg, style = label.style_label_left, textcolor = cLine, size = size.small)
+            lbS := label.new(x2, sl, "SL " + f_px(sl), color = noBg, style = label.style_label_left, textcolor = sellCol, size = size.small)
+            lbT1 := label.new(x2, tp1, "TP1 " + f_px(tp1), color = noBg, style = label.style_label_left, textcolor = buyCol, size = size.small)
+            lbT2 := label.new(x2, tp2, "TP2 " + f_px(tp2), color = noBg, style = label.style_label_left, textcolor = buyCol, size = size.small)
+        trDir := cDir
+        trEn := en
+        trSL := sl
+        trTP1 := tp1
+        trTP2 := tp2
+        trRisk := risk
+        trBar := bar_index
+        trT1 := false
+        trName := cName
+        trPat := cPat
+        tradesToday += 1
+        buySig := cDir == 1
+        sellSig := cDir == -1
+        alert(side + " " + syminfo.ticker + " · " + cName + " · Entry " + f_px(en) + " SL " + f_px(sl) + " TP1 " + f_px(tp1) + " TP2 " + f_px(tp2), alert.freq_once_per_bar_close)
+
+// ─── Plots ─────────────────────────────────────────────────────────────
+plot(showVWAP and not newDay ? vwapV : na, "VWAP", color = #FF9800, linewidth = 2, style = plot.style_linebr)
+plot(showEMA ? ema9 : na, "EMA 9", color = color.new(#2962FF, 20), linewidth = 1)
+plot(showEMA ? ema20 : na, "EMA 20", color = color.new(#9C27B0, 20), linewidth = 1)
+bgcolor(showBg and buySig ? color.new(buyCol, 80) : showBg and sellSig ? color.new(sellCol, 80) : na, title = "Signal candle")
+
+// ─── Dashboard (results per pattern) ───────────────────────────────────
+var table dash = table.new(position.top_right, 4, 13, bgcolor = color.new(#131722, 10), border_width = 1, border_color = color.new(#787B86, 60))
+f_cell(int col, int row, string txt, color tcol) =>
+    table.cell(dash, col, row, txt, text_color = tcol, text_size = size.small)
+if showDash and barstate.islast
+    color tc = #D1D4DC
+    color hd = color.white
+    f_cell(0, 0, "Scalping Patterns", hd)
+    f_cell(1, 0, timeframe.period + (timeframe.isminutes ? "m" : ""), hd)
+    f_cell(2, 0, mode, hd)
+    f_cell(3, 0, sessOn ? "NSE hours" : "all day", hd)
+    bool stopped = maxLossR > 0 and rToday <= -maxLossR
+    f_cell(0, 1, "Today", tc)
+    f_cell(1, 1, str.tostring(tradesToday) + " trades", tc)
+    f_cell(2, 1, "W " + str.tostring(winsToday) + " / L " + str.tostring(lossToday) + "  (" + (rToday >= 0 ? "+" : "") + str.tostring(rToday, "#.#") + "R)", tc)
+    f_cell(3, 1, stopped ? "stopped (loss limit)" : bar_index < pauseUntil ? "paused" : "active", stopped ? sellCol : tc)
+    f_cell(0, 2, "Pattern", hd)
+    f_cell(1, 2, "Trades", hd)
+    f_cell(2, 2, "Win %", hd)
+    f_cell(3, 2, "Net R", hd)
+    for k = 1 to 7
+        int n = array.get(patN, k)
+        float r = array.get(patR, k)
+        f_cell(0, 2 + k, f_pname(k), tc)
+        f_cell(1, 2 + k, str.tostring(n), tc)
+        f_cell(2, 2 + k, n > 0 ? str.tostring(100.0 * array.get(patW, k) / n, "#") + "%" : "-", tc)
+        f_cell(3, 2 + k, n > 0 ? (r >= 0 ? "+" : "") + str.tostring(r, "#.#") : "-", n == 0 ? tc : r >= 0 ? buyCol : sellCol)
+    f_cell(0, 10, "All patterns", hd)
+    f_cell(1, 10, str.tostring(totN), hd)
+    f_cell(2, 10, totN > 0 ? str.tostring(100.0 * totW / totN, "#") + "%" : "-", hd)
+    f_cell(3, 10, (totR >= 0 ? "+" : "") + str.tostring(totR, "#.#"), totR >= 0 ? buyCol : sellCol)
+    f_cell(0, 11, "Open trade", tc)
+    f_cell(1, 11, trDir == 0 ? "none" : (trDir == 1 ? "BUY" : "SELL"), trDir == 1 ? buyCol : trDir == -1 ? sellCol : tc)
+    f_cell(2, 11, trDir == 0 ? "" : trName, tc)
+    f_cell(3, 11, "", tc)
+    f_cell(0, 12, costPx > 0 ? "R = result in risk units, after costs" : "R = result in risk units, before costs", color.new(tc, 40))
+
+// ─── Alerts (choose these in TradingView "Create Alert") ───────────────
+alertcondition(buySig, "BUY signal", "Scalping Patterns: BUY {{ticker}} at {{close}}")
+alertcondition(sellSig, "SELL signal", "Scalping Patterns: SELL {{ticker}} at {{close}}")

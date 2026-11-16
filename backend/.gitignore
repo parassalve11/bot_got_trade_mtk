@@ -23,4 +23,5 @@ ref/
 
 # Research outputs (large, regenerate with research/*.py)
 research/data/
+research/data_intraday/
 research/results.json
