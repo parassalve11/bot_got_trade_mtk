@@ -1,0 +1,100 @@
+//@version=5
+// ════════════════════════════════════════════════════════════════════════
+//  Gold Asian-Range Scalp — XAUUSD, 5-minute chart
+//  1) Asian range = high / low from 01:00 to 09:00 broker server time
+//     (server time = New York + 7 h, so 18:00 - 02:00 New York, 03:30 - 11:30 IST in winter).
+//  2) The FIRST 5-minute candle that closes above the range = BUY, below = SELL
+//     (one trade per day, only until 17:00 server time = 10:00 New York).
+//  3) Stop = middle of the range. Target = 0.5 x risk (quick scalp target).
+//  4) Anything still open is closed at 22:45 server time (gold stops at 23:00).
+//  Tested (research/scalp_search.py, MT5 M5 Jun 2025 - Nov 2026): 290 trades, 72.4% win,
+//  +28R after spread, 6 of 7 quarters profitable.
+// ════════════════════════════════════════════════════════════════════════
+strategy("Gold Asian-Range Scalp", "Gold Asia Scalp", overlay = true, initial_capital = 1000,
+     default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.0, slippage = 2,
+     process_orders_on_close = true, calc_on_every_tick = false)
+
+grpS = "Session (broker server hours = New York + 7 h)"
+rStart  = input.int(1, "Range start hour", minval = 0, maxval = 23, group = grpS)
+rEnd    = input.int(9, "Range end hour", minval = 1, maxval = 24, group = grpS)
+untilH  = input.int(17, "No new entries from hour", minval = 1, maxval = 24, group = grpS)
+exitH   = input.int(23, "Close everything before hour", minval = 1, maxval = 24, group = grpS)
+exitEarly = input.int(15, "... this many minutes earlier", minval = 0, maxval = 120, group = grpS)
+
+grpT = "Trade"
+dirMode = input.string("Long & Short", "Direction", options = ["Long & Short", "Long only", "Short only"], group = grpT)
+stopMode = input.string("Middle of range", "Stop", options = ["Middle of range", "Other side of range"], group = grpT)
+tgtR    = input.float(0.5, "Target (x risk, 0 = none)", minval = 0, step = 0.05, group = grpT)
+
+grpV = "Style"
+showRange = input.bool(true, "Draw the Asian range", group = grpV)
+buyCol  = input.color(#089981, "BUY color", group = grpV)
+sellCol = input.color(#F23645, "SELL color", group = grpV)
+
+// Broker server clock: minutes since server midnight (New York 17:00)
+int nyMin  = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
+int srvMin = (nyMin - 17 * 60 + 1440) % 1440
+bool newDay = bar_index == 0 or srvMin < srvMin[1]
+int barMin = timeframe.in_seconds() / 60
+
+var float rHi = na
+var float rLo = na
+var int   rBars = 0
+var bool  done = false
+var int   rStartBar = na
+if newDay
+    rHi := na
+    rLo := na
+    rBars := 0
+    done := false
+    rStartBar := na
+
+bool inRange = srvMin >= rStart * 60 and srvMin < rEnd * 60
+if inRange
+    rHi := na(rHi) ? high : math.max(rHi, high)
+    rLo := na(rLo) ? low : math.min(rLo, low)
+    rBars += 1
+    if na(rStartBar)
+        rStartBar := bar_index
+
+int closeMin = srvMin + barMin                       // when this candle closes
+bool exitNow = closeMin >= exitH * 60 - exitEarly
+bool window  = srvMin >= rEnd * 60 and srvMin < untilH * 60 and not exitNow
+bool rangeOk = rBars * barMin >= (rEnd - rStart) * 60 * 0.5 and not na(rHi)
+
+// First close beyond the range decides the day
+int sig = 0
+if rangeOk and window and not done and strategy.position_size == 0
+    if close > rHi
+        sig := 1
+    else if close < rLo
+        sig := -1
+    if sig != 0
+        done := true
+bool allow = sig == 1 ? dirMode != "Short only" : sig == -1 ? dirMode != "Long only" : false
+
+if allow
+    float mid = (rHi + rLo) / 2
+    float sl = stopMode == "Middle of range" ? mid : (sig == 1 ? rLo : rHi)
+    float risk = math.abs(close - sl)
+    float tp = tgtR > 0 ? close + sig * tgtR * risk : na
+    if sig == 1
+        strategy.entry("Long", strategy.long)
+        strategy.exit("L exit", "Long", stop = sl, limit = tp)
+    else
+        strategy.entry("Short", strategy.short)
+        strategy.exit("S exit", "Short", stop = sl, limit = tp)
+
+if exitNow and strategy.position_size != 0
+    strategy.close_all(comment = "Day end")
+
+// ─── Visuals ───────────────────────────────────────────────────────────
+plot(showRange and rangeOk and not inRange ? rHi : na, "Asian high", color = color.new(buyCol, 30), style = plot.style_linebr, linewidth = 2)
+plot(showRange and rangeOk and not inRange ? rLo : na, "Asian low", color = color.new(sellCol, 30), style = plot.style_linebr, linewidth = 2)
+plot(showRange and rangeOk and not inRange ? (rHi + rLo) / 2 : na, "Range middle (stop)", color = color.gray, style = plot.style_linebr)
+bgcolor(showRange and inRange ? color.new(color.gray, 92) : na, title = "Asian session")
+plotshape(allow and sig == 1, "BUY", shape.labelup, location.belowbar, buyCol, text = "BUY", textcolor = color.white, size = size.small)
+plotshape(allow and sig == -1, "SELL", shape.labeldown, location.abovebar, sellCol, text = "SELL", textcolor = color.white, size = size.small)
+alertcondition(allow and sig == 1, "BUY", "Gold Asia Scalp: BUY {{ticker}} at {{close}}")
+alertcondition(allow and sig == -1, "SELL", "Gold Asia Scalp: SELL {{ticker}} at {{close}}")

@@ -19,6 +19,7 @@ input ENUM_AB_STOP InpStop       = AB_MID;// Stop: middle or other side of the r
 input double       InpTargetR    = 0;     // Target in R (0 = none, exit at ExitHour)
 input int          InpDir        = 0;     // 0 both, 1 BUY only, -1 SELL only
 input double       InpRiskPct    = 1.0;   // Risk per trade (% of balance)
+input int          InpMinBars    = 8;     // Range needs at least this many candles (8 on M15, 24 on M5)
 input ulong        InpMagic      = 720030;
 input bool         InpAllowLive  = false; // Allow live trading (keep OFF)
 
@@ -69,7 +70,7 @@ void OnTick()
    {
       if(trade.PositionClose(pos) && trade.ResultRetcode() == TRADE_RETCODE_DONE) Book();
    }
-   datetime cur = iTime(_Symbol, PERIOD_M15, 0);
+   datetime cur = iTime(_Symbol, _Period, 0);
    if(cur == lastBar) return;
    lastBar = cur;
    MqlDateTime now; TimeToStruct(cur, now);
@@ -78,7 +79,7 @@ void OnTick()
    // the candle that just closed
    MqlRates r[];
    ArraySetAsSeries(r, true);
-   int n = CopyRates(_Symbol, PERIOD_M15, 1, 120, r);
+   int n = CopyRates(_Symbol, _Period, 1, (int)(30 * 3600 / PeriodSeconds(_Period)), r);
    if(n < 10) return;
    MqlDateTime b; TimeToStruct(r[0].time, b);
    if((long)r[0].time / 86400 != today || b.hour < InpRangeEnd || b.hour >= InpEntryUntil || tnow >= exitAt) return;
@@ -89,7 +90,7 @@ void OnTick()
       MqlDateTime t; TimeToStruct(r[i].time, t);
       if(t.hour >= InpRangeStart && t.hour < InpRangeEnd) { hi = MathMax(hi, r[i].high); lo = MathMin(lo, r[i].low); cnt++; }
    }
-   if(cnt < 8) return;
+   if(cnt < InpMinBars) return;
    double c = r[0].close;
    int d = c > hi ? 1 : c < lo ? -1 : 0;
    if(d == 0) return;
