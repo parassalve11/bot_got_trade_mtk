@@ -1,0 +1,103 @@
+//@version=5
+// ════════════════════════════════════════════════════════════════════════
+//  Silver Gold-Led Scalp — put on an XAGUSD 5-minute chart
+//  1) Gold's Asian range = gold's high / low from 01:00 to 09:00 broker server time
+//     (server time = New York + 7 h).
+//  2) Gold's FIRST 5-minute close above that range = BUY silver, below = SELL silver
+//     (one trade per day, until 17:00 server time).
+//  3) Silver stop = 1.5 x half of SILVER's own Asian range; target = 1 x risk.
+//  4) Anything still open is closed at 22:45 server time.
+//  Why: gold's breakouts tend to continue, silver alone snaps back - but it follows gold.
+//  MT5 Strategy Tester, real ticks Nov 2025 - Nov 2026: 189 trades, 56.1% win, +20.5R,
+//  worst drawdown -5.9R (17 months: 284 trades, +33.7R).
+// ════════════════════════════════════════════════════════════════════════
+strategy("Silver Gold-Led Scalp", "Silver GL Scalp", overlay = true, initial_capital = 1000,
+     default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, slippage = 2,
+     process_orders_on_close = true, calc_on_every_tick = false)
+
+grpS = "Session (broker server hours = New York + 7 h)"
+goldSym = input.symbol("OANDA:XAUUSD", "Leader (gold) symbol", group = grpS)
+rStart  = input.int(1, "Range start hour", minval = 0, maxval = 23, group = grpS)
+rEnd    = input.int(9, "Range end hour", minval = 1, maxval = 24, group = grpS)
+untilH  = input.int(17, "No new entries from hour", minval = 1, maxval = 24, group = grpS)
+exitH   = input.int(23, "Close everything before hour", minval = 1, maxval = 24, group = grpS)
+exitEarly = input.int(15, "... this many minutes earlier", minval = 0, maxval = 120, group = grpS)
+
+grpT = "Trade"
+stopMult = input.float(1.5, "Stop (x half of silver's Asian range)", minval = 0.25, step = 0.25, group = grpT)
+tgtR     = input.float(1.0, "Target (x risk, 0 = none)", minval = 0, step = 0.25, group = grpT)
+dirMode  = input.string("Long & Short", "Direction", options = ["Long & Short", "Long only", "Short only"], group = grpT)
+
+grpV = "Style"
+buyCol  = input.color(#089981, "BUY color", group = grpV)
+sellCol = input.color(#F23645, "SELL color", group = grpV)
+
+// Broker server clock (minutes since server midnight = New York 17:00)
+f_srvMin() =>
+    int ny = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
+    (ny - 17 * 60 + 1440) % 1440
+
+// Asian range of the CURRENT symbol (used for gold inside request.security and for silver)
+f_range() =>
+    var float hi = na
+    var float lo = na
+    var int bars = 0
+    int m = f_srvMin()
+    bool nd = barstate.isfirst or m < nz(m[1], 0)
+    if nd
+        hi := na
+        lo := na
+        bars := 0
+    if m >= rStart * 60 and m < rEnd * 60
+        hi := na(hi) ? high : math.max(hi, high)
+        lo := na(lo) ? low : math.min(lo, low)
+        bars += 1
+    [hi, lo, bars, close]
+
+[gHi, gLo, gBars, gClose] = request.security(goldSym, timeframe.period, f_range(), lookahead = barmerge.lookahead_off)
+[sHi, sLo, sBars, sClose] = f_range()
+
+int srvMin = f_srvMin()
+bool newDay = barstate.isfirst or srvMin < srvMin[1]
+int barMin = timeframe.in_seconds() / 60
+bool exitNow = srvMin + barMin >= exitH * 60 - exitEarly
+bool window = srvMin >= rEnd * 60 and srvMin < untilH * 60 and not exitNow
+int needBars = int((rEnd - rStart) * 60 / barMin * 0.5)
+bool rangesOk = gBars >= needBars and sBars >= needBars and not na(gHi) and not na(sHi)
+
+var bool done = false
+if newDay
+    done := false
+
+int sig = 0
+if rangesOk and window and not done
+    if gClose > gHi
+        sig := 1
+    else if gClose < gLo
+        sig := -1
+    if sig != 0
+        done := true
+bool allow = sig == 1 ? dirMode != "Short only" : sig == -1 ? dirMode != "Long only" : false
+
+if allow and strategy.position_size == 0
+    float risk = stopMult * (sHi - sLo) / 2
+    float sl = close - sig * risk
+    float tp = tgtR > 0 ? close + sig * tgtR * risk : na
+    if sig == 1
+        strategy.entry("Long", strategy.long)
+        strategy.exit("L exit", "Long", stop = sl, limit = tp)
+    else
+        strategy.entry("Short", strategy.short)
+        strategy.exit("S exit", "Short", stop = sl, limit = tp)
+
+if exitNow and strategy.position_size != 0
+    strategy.close_all(comment = "Day end")
+
+bool showRng = rangesOk and srvMin >= rEnd * 60
+plot(showRng ? sHi : na, "Silver Asian high", color = color.new(buyCol, 40), style = plot.style_linebr)
+plot(showRng ? sLo : na, "Silver Asian low", color = color.new(sellCol, 40), style = plot.style_linebr)
+bgcolor(srvMin >= rStart * 60 and srvMin < rEnd * 60 ? color.new(color.gray, 93) : na, title = "Asian session")
+plotshape(allow and sig == 1, "BUY", shape.labelup, location.belowbar, buyCol, text = "BUY (gold broke up)", textcolor = color.white, size = size.small)
+plotshape(allow and sig == -1, "SELL", shape.labeldown, location.abovebar, sellCol, text = "SELL (gold broke down)", textcolor = color.white, size = size.small)
+alertcondition(allow and sig == 1, "BUY", "Silver Gold-Led Scalp: BUY {{ticker}} at {{close}}")
+alertcondition(allow and sig == -1, "SELL", "Silver Gold-Led Scalp: SELL {{ticker}} at {{close}}")
