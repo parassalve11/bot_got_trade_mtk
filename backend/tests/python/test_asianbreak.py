@@ -125,3 +125,52 @@ def test_scalp_on_m5_sends_half_r_target(env):
     assert record["instance"] == "sc_eurusd" and record["side"] == "LONG"
     assert record["stop_distance"] == pytest.approx(0.0015, abs=2e-5)
     assert record["target_distance"] == pytest.approx(0.00075, abs=2e-5)   # 0.5 x risk
+
+
+def m5_day(day0, lo, hi, after):
+    """M5 candles from 01:00: 96 inside [lo, hi] (hitting both ends), then the closes in `after`."""
+    bars, t = [], day0 + 3600
+    for k in range(96):
+        mid = lo + (hi - lo) * (0.25 if k % 2 else 0.75)
+        bars.append(dict(time=t, open=mid, high=hi if k == 5 else mid, low=lo if k == 9 else mid, close=mid))
+        t += 300
+    for c in after:
+        bars.append(dict(time=t, open=c, high=c, low=c, close=c))
+        t += 300
+    return bars
+
+
+def test_gold_led_trades_follower_in_leaders_direction(env):
+    day0 = math.floor(env.now[0] / 86400) * 86400
+    follower = m5_day(day0, 1.0990, 1.1010, [1.1000])          # EURUSD stays inside its range
+    leader = m5_day(day0, 1.1990, 1.2010, [1.1985])            # GBPUSD closes BELOW its range
+    forming = follower[-1]["time"] + 300
+    env.now[0] = forming + 5
+    env.broker.bars["EURUSD"] = follower + [dict(follower[-1], time=forming)]
+    env.broker.bars["GBPUSD"] = leader + [dict(leader[-1], time=forming)]
+    cfg = StreamConfig(instance="gl_eurusd", tv_symbol="OANDA:EURUSD", timeframe="5", strategy="breakout",
+                       risk_percent=0.5, history_bars=400,
+                       breakout=dict(leader="OANDA:GBPUSD", stop_range_mult=1.5, target_r=1.0, min_range_bars=24))
+    env.worker.maintain()
+    SignalEngine(env.settings, env.db, env.broker, env.mapper, mode="trade", streams=[cfg]).poll(env.clock())
+    env.worker.tick()
+    record = env.db.open_positions()[0]
+    assert record["instance"] == "gl_eurusd" and record["side"] == "SHORT"     # leader broke DOWN
+    assert record["stop_distance"] == pytest.approx(1.5 * 0.0010, abs=2e-5)    # 1.5 x half of own range
+    assert record["target_distance"] == pytest.approx(1.5 * 0.0010, abs=2e-5)  # 1R
+
+
+def test_gold_led_waits_when_leader_has_no_breakout(env):
+    day0 = math.floor(env.now[0] / 86400) * 86400
+    follower = m5_day(day0, 1.0990, 1.1010, [1.1020])          # follower itself breaks out ...
+    leader = m5_day(day0, 1.1990, 1.2010, [1.2000])            # ... but the leader does not
+    forming = follower[-1]["time"] + 300
+    env.now[0] = forming + 5
+    env.broker.bars["EURUSD"] = follower + [dict(follower[-1], time=forming)]
+    env.broker.bars["GBPUSD"] = leader + [dict(leader[-1], time=forming)]
+    cfg = StreamConfig(instance="gl_eurusd", tv_symbol="OANDA:EURUSD", timeframe="5", strategy="breakout",
+                       risk_percent=0.5, history_bars=400,
+                       breakout=dict(leader="OANDA:GBPUSD", stop_range_mult=1.5, target_r=1.0, min_range_bars=24))
+    env.worker.maintain()
+    SignalEngine(env.settings, env.db, env.broker, env.mapper, mode="trade", streams=[cfg]).poll(env.clock())
+    assert env.db.status()["recent_events"] == []

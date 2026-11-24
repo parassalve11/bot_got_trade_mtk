@@ -182,6 +182,14 @@ class SignalEngine:
         cfg = stream.breakout
         offset = self.settings.mt5_server_utc_offset_seconds
         state = breakout_state(bars, stream.seconds, offset, cfg)
+        signal_state = state
+        if cfg.leader:  # gold-led: the leader's breakout on the SAME candle gives the direction
+            lead_rule = self.symbols.resolve(cfg.leader, require_enabled=False)
+            lead = [b for b in self.broker.rates(lead_rule.broker_symbol, stream.timeframe, stream.history_bars + 3)
+                    if b["time"] <= candle]
+            if not lead or lead[-1]["time"] != candle:
+                raise Retryable("engine_leader_history_not_aligned")
+            signal_state = breakout_state(lead, stream.seconds, offset, cfg)
         position = self.journal_position(stream)
         action, extra, signal = None, None, None
         if position:
@@ -190,15 +198,27 @@ class SignalEngine:
             if state.exit_now or state.day != entry_day:
                 action, extra = "time_exit", {"reason": "day end"}
                 signal = BarSignal(position["side"], state.close, 1.0, None)
-        elif state.entry:
+        elif signal_state.entry and (state.high is not None or not cfg.leader):
             action = "entry"
+            side = signal_state.entry
             tick = symbol.tick_size
-            dist = abs(state.close - state.stop)
+            if cfg.leader:
+                half = (state.high - state.low) / 2
+                mid = (state.high + state.low) / 2
+                dist = cfg.stop_range_mult * half if cfg.stop_range_mult else abs(state.close - mid)
+                what = (f"{cfg.leader.split(':')[-1]} broke its Asian range "
+                        f"{signal_state.low:.2f}-{signal_state.high:.2f}")
+            else:
+                dist = abs(state.close - state.stop)
+                what = f"Asian range {state.low:.2f}-{state.high:.2f} breakout"
+            if dist <= 0:
+                self.db.set_state(key, candle)
+                return None
             loss = max(1.0, float(math.ceil(dist / tick - 1e-9)))
             profit = max(1.0, float(math.ceil(cfg.target_r * dist / tick - 1e-9))) if cfg.target_r else None
-            signal = BarSignal(state.entry, state.close, loss, profit)
-            extra = {"pattern": f"Asian range {state.low:.2f}-{state.high:.2f} breakout", "stop": state.stop,
-                     "target": None}
+            signal = BarSignal(side, state.close, loss, profit)
+            stop = state.close - dist if side == "LONG" else state.close + dist
+            extra = {"pattern": what, "stop": stop, "target": None}
         if not action:
             self.db.set_state(key, candle)
             return None

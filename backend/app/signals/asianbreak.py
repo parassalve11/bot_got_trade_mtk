@@ -8,6 +8,8 @@ candle that ends `exit_hour` - `exit_early_min` (gold stops trading at 23:00 ser
 
 MT5 Strategy Tester (real ticks, Nov 2025 - Nov 2026): 181 trades, 49.7% win, +29.5R, worst
 drawdown -11R; 2 years (M1 OHLC): 403 trades, +76R, profitable in both years.
+Gold-led mode (`leader` set): research/silver_scalp.py - silver follows gold's breakout, stop
+1.5 x half of silver's range, target 1R; MT5 real ticks 12 months: 189 trades, 56.1% win, +20.5R.
 Pure maths. Bar times are the bot's UTC times; `server_offset` (seconds) turns them back into
 MT5 server time (the client subtracted exactly this offset).
 """
@@ -29,6 +31,10 @@ class BreakoutSettings(BaseModel):
     target_r: float = Field(default=0, ge=0)          # 0 = no target, exit at the day end
     trade_dir: Literal["Long & Short", "Long only", "Short only"] = "Long & Short"
     min_range_bars: int = Field(default=8, ge=1)
+    # Gold-led mode: the LEADER's (e.g. "OANDA:XAUUSD") first breakout gives the signal; this
+    # symbol is traded in that direction with stop = stop_range_mult x half of ITS OWN range.
+    leader: str | None = Field(default=None, min_length=3, max_length=64)
+    stop_range_mult: float = Field(default=0, ge=0)   # 0 = stop at this symbol's range middle / side
 
 
 @dataclass(frozen=True)

@@ -283,6 +283,12 @@ def _breakout_text(s) -> str:
     b = s.breakout
     side = {"Short only": "SELL only", "Long only": "BUY only"}.get(b.trade_dir, "BUY + SELL")
     target = f"target {b.target_r:g}× risk" if b.target_r else "no target"
+    if b.leader:
+        lead = b.leader.split(":")[-1]
+        return (f"Follows {lead}: trades in the direction of {lead}'s first close beyond its Asian range "
+                f"({b.range_start:02d}:00-{b.range_end:02d}:00 server time) until {b.entry_until:02d}:00 · "
+                f"stop {b.stop_range_mult:g}× half of this symbol's range · {target} · closed before "
+                f"{b.exit_hour:02d}:00 · Risk {s.risk_percent}%")
     return (f"Asian range breakout · {side} · range {b.range_start:02d}:00-{b.range_end:02d}:00 server time · "
             f"first close beyond it until {b.entry_until:02d}:00 · stop at the range {b.stop_mode} · {target} · "
             f"closed before {b.exit_hour:02d}:00 · Risk {s.risk_percent}%")

@@ -191,5 +191,25 @@
       "trade_dir": "Long & Short",
       "min_range_bars": 24
     }
+  },
+  {
+    "enabled": true,
+    "instance": "gls_xagusd",
+    "tv_symbol": "OANDA:XAGUSD",
+    "timeframe": "5",
+    "strategy": "breakout",
+    "risk_percent": 0.5,
+    "history_bars": 400,
+    "breakout": {
+      "range_start": 1,
+      "range_end": 9,
+      "entry_until": 17,
+      "exit_hour": 23,
+      "target_r": 1.0,
+      "trade_dir": "Long & Short",
+      "min_range_bars": 24,
+      "leader": "OANDA:XAUUSD",
+      "stop_range_mult": 1.5
+    }
   }
 ]
