@@ -1,7 +1,7 @@
 export type Side = "LONG" | "SHORT";
 
-/** Dashboard section: "intraday" = 15-minute strategies, "swing" = 1-hour and above. */
-export type Group = "intraday" | "swing";
+/** Dashboard section: "scalping" = 1-5 minute, "intraday" = 15-30 minute, "swing" = 1 hour and above. */
+export type Group = "scalping" | "intraday" | "swing";
 
 export type Signal = {
   at: number;

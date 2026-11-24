@@ -161,7 +161,7 @@
     "tv_symbol": "OANDA:XAUUSD",
     "timeframe": "15",
     "strategy": "breakout",
-    "risk_percent": 1.0,
+    "risk_percent": 0.5,
     "history_bars": 200,
     "breakout": {
       "range_start": 1,
@@ -171,6 +171,25 @@
       "stop_mode": "middle",
       "target_r": 0,
       "trade_dir": "Long & Short"
+    }
+  },
+  {
+    "enabled": true,
+    "instance": "sc_xauusd",
+    "tv_symbol": "OANDA:XAUUSD",
+    "timeframe": "5",
+    "strategy": "breakout",
+    "risk_percent": 0.5,
+    "history_bars": 400,
+    "breakout": {
+      "range_start": 1,
+      "range_end": 9,
+      "entry_until": 17,
+      "exit_hour": 23,
+      "stop_mode": "middle",
+      "target_r": 0.5,
+      "trade_dir": "Long & Short",
+      "min_range_bars": 24
     }
   }
 ]

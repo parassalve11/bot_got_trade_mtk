@@ -127,12 +127,13 @@ def _instance_of(event_id: str) -> str | None:
 
 
 def _groups(request) -> dict:
-    """instance -> dashboard section ("intraday" for 15-minute strategies, else "swing")."""
+    """instance -> dashboard section ("scalping" 1-5 min, "intraday" 15-30 min, else "swing")."""
     return {s.instance: s.group for s in _streams(request)}
 
 
 def _tf_group(timeframe) -> str:
-    return "intraday" if str(timeframe) in ("1", "5", "15", "30") else "swing"
+    tf = str(timeframe)
+    return "scalping" if tf in ("1", "5") else "intraday" if tf in ("15", "30") else "swing"
 
 
 def _open_positions(db, groups=None):

@@ -16,6 +16,7 @@ const MODES: { key: StrategyMode; label: string; help: string }[] = [
 const SECTIONS: [string, string][] = [
   ["swing", "Swing · 1-hour"],
   ["intraday", "Intraday · 15-minute"],
+  ["scalping", "Scalping · 5-minute"],
 ];
 
 function Row({ label, value, tone = "" }: { label: string; value: string; tone?: string }) {

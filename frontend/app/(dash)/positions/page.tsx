@@ -15,9 +15,9 @@ export default function PositionsPage() {
   const { data, error, refresh } = usePoll<Positions>("positions", 15_000);
   const [tab, setTab] = useState<"open" | "closed">("open");
   const [strategy, setStrategy] = useState("all");
-  // Swing (1-hour) trades only; 15-minute trades have their own Intraday page.
-  const closed = useMemo(() => (data?.closed ?? []).filter((c) => c.group !== "intraday"), [data]);
-  const open = useMemo(() => (data?.open ?? []).filter((p) => p.group !== "intraday"), [data]);
+  // Swing (1-hour) trades only; 15-minute and 5-minute trades have their own Intraday / Scalping pages.
+  const closed = useMemo(() => (data?.closed ?? []).filter((c) => (c.group ?? "swing") === "swing"), [data]);
+  const open = useMemo(() => (data?.open ?? []).filter((p) => (p.group ?? "swing") === "swing"), [data]);
   const strategies = useMemo(() => Array.from(new Set(closed.map((c) => c.instance))).sort(), [closed]);
   const shown = strategy === "all" ? closed : closed.filter((c) => c.instance === strategy);
 
@@ -26,8 +26,9 @@ export default function PositionsPage() {
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Positions</h1>
         <p className="text-sm text-slate-500">
-          Swing trades (1-hour strategies), with results from MT5 deal history. 15-minute trades are on the{" "}
-          <Link href="/intraday" className="font-medium text-indigo-600 hover:underline">Intraday page</Link>.
+          Swing trades (1-hour strategies), with results from MT5 deal history. 15-minute and 5-minute trades are on the{" "}
+          <Link href="/intraday" className="font-medium text-indigo-600 hover:underline">Intraday</Link> and{" "}
+          <Link href="/scalping" className="font-medium text-indigo-600 hover:underline">Scalping</Link> pages.
         </p>
       </div>
       <ErrorBanner message={error} />

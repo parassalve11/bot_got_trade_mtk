@@ -32,7 +32,7 @@ def test_rsi2_dip_in_uptrend_is_a_buy():
     assert meanrev_state(bars[:100]) is None                # not enough history for SMA200
 
 
-def test_stream_is_intraday_group():
+def test_fifteen_minute_stream_is_intraday_group():
     assert stream().group == "intraday"
     assert StreamConfig(tv_symbol="OANDA:EURUSD", timeframe="60").group == "swing"
 

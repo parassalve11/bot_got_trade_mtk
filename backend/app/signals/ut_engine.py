@@ -65,8 +65,8 @@ class StreamConfig(BaseModel):
 
     @property
     def group(self) -> str:
-        """Dashboard section: "intraday" (below 1 hour, e.g. 15-minute scalps) or "swing"."""
-        return "intraday" if self.seconds < 3600 else "swing"
+        """Dashboard section: "scalping" (1-5 minute), "intraday" (15-30 minute) or "swing" (1 hour+)."""
+        return "scalping" if self.seconds <= 300 else "intraday" if self.seconds < 3600 else "swing"
 
 
 def load_streams(path: Path) -> list[StreamConfig]:

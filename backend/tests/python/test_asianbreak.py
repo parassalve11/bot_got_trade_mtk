@@ -94,3 +94,34 @@ def test_engine_trades_breakout_and_closes_at_day_end(env):
     assert top == "date_end"
     env.worker.tick()
     assert env.db.open_positions() == [] and env.broker.live == []
+
+
+def test_five_minute_stream_is_scalping_group():
+    assert StreamConfig(tv_symbol="OANDA:EURUSD", timeframe="5").group == "scalping"
+    assert StreamConfig(tv_symbol="OANDA:EURUSD", timeframe="15").group == "intraday"
+
+
+def test_scalp_on_m5_sends_half_r_target(env):
+    m5 = 300
+    day0 = math.floor(env.now[0] / 86400) * 86400
+    bars = []
+    t = day0 + 3600
+    for k in range(96):                                  # 01:00 .. 08:55, range 1.0990 - 1.1010
+        mid = 1.0995 if k % 2 else 1.1005
+        bars.append(dict(time=t, open=mid, high=1.1010 if k == 5 else mid + 0.0001,
+                         low=1.0990 if k == 9 else mid - 0.0001, close=mid))
+        t += m5
+    bars.append(dict(time=t, open=1.1008, high=1.1016, low=1.1007, close=1.1015))   # 09:00 breakout
+    forming = t + m5
+    env.now[0] = forming + 5
+    cfg = StreamConfig(instance="sc_eurusd", tv_symbol="OANDA:EURUSD", timeframe="5", strategy="breakout",
+                       risk_percent=0.5, history_bars=400,
+                       breakout=dict(target_r=0.5, min_range_bars=24))
+    env.broker.bars["EURUSD"] = bars + [dict(bars[-1], time=forming)]
+    env.worker.maintain()
+    SignalEngine(env.settings, env.db, env.broker, env.mapper, mode="trade", streams=[cfg]).poll(env.clock())
+    env.worker.tick()
+    record = env.db.open_positions()[0]
+    assert record["instance"] == "sc_eurusd" and record["side"] == "LONG"
+    assert record["stop_distance"] == pytest.approx(0.0015, abs=2e-5)
+    assert record["target_distance"] == pytest.approx(0.00075, abs=2e-5)   # 0.5 x risk
