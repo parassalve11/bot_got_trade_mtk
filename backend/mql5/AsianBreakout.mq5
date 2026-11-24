@@ -62,15 +62,18 @@ void OnTick()
 {
    if(!(MQLInfoInteger(MQL_TESTER) || InpAllowLive)) return;
    if(pos != 0 && !PositionSelectByTicket(pos)) Book();
+   // Day-end exit 5 minutes before ExitHour (gold stops trading at 23:00 server time).
+   datetime tnow = TimeCurrent();
+   datetime exitAt = (datetime)((long)tnow / 86400 * 86400 + InpExitHour * 3600 - 300);
+   if(pos != 0 && (tnow >= exitAt || (long)entryT / 86400 != (long)tnow / 86400))
+   {
+      if(trade.PositionClose(pos) && trade.ResultRetcode() == TRADE_RETCODE_DONE) Book();
+   }
    datetime cur = iTime(_Symbol, PERIOD_M15, 0);
    if(cur == lastBar) return;
    lastBar = cur;
    MqlDateTime now; TimeToStruct(cur, now);
    long today = (long)cur / 86400;
-   if(pos != 0 && (now.hour >= InpExitHour || (long)entryT / 86400 != today))
-   {
-      trade.PositionClose(pos); Book();
-   }
    if(pos != 0 || doneDay == today) return;
    // the candle that just closed
    MqlRates r[];
@@ -78,7 +81,7 @@ void OnTick()
    int n = CopyRates(_Symbol, PERIOD_M15, 1, 120, r);
    if(n < 10) return;
    MqlDateTime b; TimeToStruct(r[0].time, b);
-   if((long)r[0].time / 86400 != today || b.hour < InpRangeEnd || b.hour >= InpEntryUntil || now.hour >= InpExitHour) return;
+   if((long)r[0].time / 86400 != today || b.hour < InpRangeEnd || b.hour >= InpEntryUntil || tnow >= exitAt) return;
    double hi = -DBL_MAX, lo = DBL_MAX; int cnt = 0;
    for(int i = 0; i < n; i++)
    {
