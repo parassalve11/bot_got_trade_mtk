@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from app.signals.asianbreak import BreakoutSettings
 from app.signals.meanrev import MeanRevSettings
 from app.signals.patterns import PatternSettings
 
@@ -52,9 +53,11 @@ class StreamConfig(BaseModel):
     # "ut" = UT Bot (fields above); "patterns" = Classic Chart Patterns (app/signals/patterns.py,
     # settings in `patterns`; stop/target come from the pattern, the UT fields are ignored).
     # "meanrev" = 15-minute RSI(2) mean reversion (app/signals/meanrev.py, settings in `meanrev`).
-    strategy: Literal["ut", "patterns", "meanrev"] = "ut"
+    # "breakout" = gold Asian-range breakout (app/signals/asianbreak.py, settings in `breakout`).
+    strategy: Literal["ut", "patterns", "meanrev", "breakout"] = "ut"
     patterns: PatternSettings = Field(default_factory=PatternSettings)
     meanrev: MeanRevSettings = Field(default_factory=MeanRevSettings)
+    breakout: BreakoutSettings = Field(default_factory=BreakoutSettings)
 
     @property
     def seconds(self) -> int:

@@ -130,5 +130,17 @@
     "gross_loss": -198.36,
     "max_drawdown": -54.82,
     "note": "Scaled to $1000 capital at 1% risk. Unseen last 2 months: 23 trades, 73.9% win, +2.8R. Small sample - demo first."
+  },
+  "ab_xauusd": {
+    "period": "25 Nov 2025 - 23 Nov 2026 (MT5 Strategy Tester, real ticks)",
+    "trades": 181,
+    "wins": 90,
+    "losses": 91,
+    "win_rate": 0.497,
+    "net": 295.05,
+    "gross_profit": 1069.32,
+    "gross_loss": -774.27,
+    "max_drawdown": -111.03,
+    "note": "1R = $10 (1% of $1000). 2 years (M1 OHLC): 403 trades, 47.6% win, +76R, profitable in both years."
   }
 }

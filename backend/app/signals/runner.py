@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from app.control import effective_stream_mode
 from app.schemas import ENTRY_EVENTS, AlertEnvelope
+from app.signals.asianbreak import breakout_state
 from app.signals.meanrev import meanrev_state
 from app.signals.patterns import pattern_signals
 from app.signals.ut_engine import (BarSignal, decide, htf_direction_at, htf_series, load_streams,
@@ -99,6 +100,8 @@ class SignalEngine:
             return self.poll_patterns(stream, bars, rule, symbol, key, last["time"], close_time, now, watch_only)
         if stream.strategy == "meanrev":
             return self.poll_meanrev(stream, bars, rule, symbol, key, last["time"], close_time, now, watch_only)
+        if stream.strategy == "breakout":
+            return self.poll_breakout(stream, bars, rule, symbol, key, last["time"], close_time, now, watch_only)
         signal = signal_series(bars, stream, symbol.tick_size)[-1]
         position = self.journal_position(stream)
         trend = None
@@ -174,6 +177,34 @@ class SignalEngine:
         alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
         return {"alert": alert, "rule": rule, "watch_only": watch_only, "key": key, "candle": candle, "extra": extra}
 
+    def poll_breakout(self, stream, bars, rule, symbol, key, candle, close_time, now, watch_only):
+        """Asian-range breakout: first close beyond the range enters; flat before the day ends."""
+        cfg = stream.breakout
+        offset = self.settings.mt5_server_utc_offset_seconds
+        state = breakout_state(bars, stream.seconds, offset, cfg)
+        position = self.journal_position(stream)
+        action, extra, signal = None, None, None
+        if position:
+            entry_close = int(position["trade_id"].rsplit(":", 2)[-2]) / 1000
+            entry_day = int((entry_close - stream.seconds + offset) // 86400)
+            if state.exit_now or state.day != entry_day:
+                action, extra = "time_exit", {"reason": "day end"}
+                signal = BarSignal(position["side"], state.close, 1.0, None)
+        elif state.entry:
+            action = "entry"
+            tick = symbol.tick_size
+            dist = abs(state.close - state.stop)
+            loss = max(1.0, float(math.ceil(dist / tick - 1e-9)))
+            profit = max(1.0, float(math.ceil(cfg.target_r * dist / tick - 1e-9))) if cfg.target_r else None
+            signal = BarSignal(state.entry, state.close, loss, profit)
+            extra = {"pattern": f"Asian range {state.low:.2f}-{state.high:.2f} breakout", "stop": state.stop,
+                     "target": None}
+        if not action:
+            self.db.set_state(key, candle)
+            return None
+        alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
+        return {"alert": alert, "rule": rule, "watch_only": watch_only, "key": key, "candle": candle, "extra": extra}
+
     def journal_position(self, stream):
         matches = [
             p
@@ -201,7 +232,8 @@ class SignalEngine:
         entry = event in ENTRY_EVENTS
         context = dict(
             source="mt5_engine",
-            strategy={"patterns": "classic_chart_patterns", "meanrev": "mean_reversion_rsi2"}.get(
+            strategy={"patterns": "classic_chart_patterns", "meanrev": "mean_reversion_rsi2",
+                      "breakout": "asian_range_breakout"}.get(
                 stream.strategy, "bytefx_ut_multi_asset"),
             version="1.1.0",
             instance=stream.instance,

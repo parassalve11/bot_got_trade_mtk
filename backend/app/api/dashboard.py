@@ -278,6 +278,15 @@ def _meanrev_text(s) -> str:
             f"Risk {s.risk_percent}%")
 
 
+def _breakout_text(s) -> str:
+    b = s.breakout
+    side = {"Short only": "SELL only", "Long only": "BUY only"}.get(b.trade_dir, "BUY + SELL")
+    target = f"target {b.target_r:g}× risk" if b.target_r else "no target"
+    return (f"Asian range breakout · {side} · range {b.range_start:02d}:00-{b.range_end:02d}:00 server time · "
+            f"first close beyond it until {b.entry_until:02d}:00 · stop at the range {b.stop_mode} · {target} · "
+            f"closed before {b.exit_hour:02d}:00 · Risk {s.risk_percent}%")
+
+
 def _capital(settings, db, equity):
     """Bot capital as the worker computes it (read-only here)."""
     base = db.get_state("risk_capital_base") or {}
@@ -301,7 +310,8 @@ def strategies(request: Request):
             "instance": s.instance, "tv_symbol": s.tv_symbol, "broker_symbol": rule.broker_symbol if rule else None,
             "symbol_enabled": bool(rule and rule.enabled), "timeframe": s.timeframe, "group": s.group,
             "settings": {"description": _pattern_text(s)} if s.strategy == "patterns" else
-                        {"description": _meanrev_text(s)} if s.strategy == "meanrev" else {
+                        {"description": _meanrev_text(s)} if s.strategy == "meanrev" else
+                        {"description": _breakout_text(s)} if s.strategy == "breakout" else {
                          "sensitivity": s.sensitivity, "atr_length": s.atr_length, "stop_mode": s.stop_mode,
                          "stop_atr": s.stop_atr, "target_mode": s.target_mode, "reward_ratio": s.reward_ratio,
                          "opposite_mode": s.opposite_mode, "direction": s.direction, "htf_filter": s.htf_filter,
