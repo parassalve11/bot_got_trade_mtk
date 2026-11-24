@@ -198,7 +198,7 @@
     "tv_symbol": "OANDA:XAGUSD",
     "timeframe": "5",
     "strategy": "breakout",
-    "risk_percent": 0.5,
+    "risk_percent": 1.0,
     "history_bars": 400,
     "breakout": {
       "range_start": 1,
