@@ -149,10 +149,10 @@
     "wins": 138,
     "losses": 52,
     "win_rate": 0.726,
-    "net": 99.5,
+    "net": 199.0,
     "gross_profit": null,
     "gross_loss": null,
-    "max_drawdown": -18.0,
-    "note": "1R = $5 (0.5% of $1000). 17 months M5 (M1 OHLC): 289 trades, 72.3% win, +28.9R. Same signal as ab_xauusd (15m) with a 0.5R target."
+    "max_drawdown": -36.0,
+    "note": "1R = $10 (1% of $1000). 17 months M5 (M1 OHLC): 289 trades, 72.3% win, +28.9R. Same signal as ab_xauusd (15m) with a 0.5R target."
   }
 }
