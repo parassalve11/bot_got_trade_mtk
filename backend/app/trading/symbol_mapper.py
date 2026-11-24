@@ -17,6 +17,9 @@ class SymbolRule(BaseModel):
     # >1 lets different strategies (e.g. split small/big targets) each hold one bot position
     # on this symbol. Requires a hedging account. Default 1 = one position per symbol.
     max_bot_positions: int = Field(default=1, ge=1, le=4)
+    # Small account: this symbol may use its minimum lot while it risks up to this % of the bot
+    # capital (overrides MIN_LOT_MAX_RISK_PERCENT for this symbol only; None = use the global value).
+    min_lot_max_risk_percent: float | None = Field(default=None, ge=0, le=10)
 
 
 class SymbolMapper:

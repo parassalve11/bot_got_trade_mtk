@@ -155,3 +155,14 @@ def test_capital_follows_bot_profit_and_loss(env):
     assert bot_capital(env.db, env.settings, 9900) == 2000  # new capital resets the baseline
     env.settings = env.settings.model_copy(update=dict(risk_capital=None))
     assert bot_capital(env.db, env.settings, 9900) == 9900
+
+
+def test_symbol_min_lot_cap_overrides_the_global_cap(env):
+    capital(env, 1000, 0)  # global: never use the minimum lot above the risk budget
+    rule = env.mapper.rules["OANDA:EURUSD"]
+    env.mapper.rules["OANDA:EURUSD"] = rule.model_copy(update=dict(min_lot_max_risk_percent=1.0))
+    bars, base = eurusd_bars(env)
+    run_engine(env, bars, base)
+    env.worker.tick()
+    assert env.broker.live and env.broker.live[0].volume == 0.01  # allowed for this symbol only
+    assert 5 < env.db.open_positions()[0]["risk_budget"] <= 10

@@ -229,7 +229,9 @@ class RiskManager:
         allowed = spendable
         if lot < symbol.volume_min or lot <= 0:
             # Small account: the minimum lot, only if its risk stays within the configured cap.
-            min_cap = capital * self.settings.min_lot_max_risk_percent / 100
+            cap_pct = (self.settings.min_lot_max_risk_percent if rule.min_lot_max_risk_percent is None
+                       else rule.min_lot_max_risk_percent)
+            min_cap = capital * cap_pct / 100
             if 0 < loss <= min_cap + 1e-6 and symbol.volume_min <= min(rule.max_lot, self.settings.max_lot):
                 lot, allowed = symbol.volume_min, min_cap
             else:

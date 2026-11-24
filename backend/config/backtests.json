@@ -141,7 +141,7 @@
     "gross_profit": 1069.32,
     "gross_loss": -774.27,
     "max_drawdown": -111.03,
-    "note": "Shown at 1% risk (1R = $10); runs at 0.5% alongside the 5-minute scalp. 2 years (M1 OHLC): 403 trades, 47.6% win, +76R, profitable in both years."
+    "note": "1R = $10 (1% of $1000). 2 years (M1 OHLC): 403 trades, 47.6% win, +76R, profitable in both years."
   },
   "sc_xauusd": {
     "period": "25 Nov 2025 - 23 Nov 2026 (MT5 Strategy Tester, real ticks)",

@@ -161,7 +161,7 @@
     "tv_symbol": "OANDA:XAUUSD",
     "timeframe": "15",
     "strategy": "breakout",
-    "risk_percent": 0.5,
+    "risk_percent": 1.0,
     "history_bars": 200,
     "breakout": {
       "range_start": 1,
