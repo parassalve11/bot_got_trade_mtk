@@ -13,6 +13,11 @@ const MODES: { key: StrategyMode; label: string; help: string }[] = [
   { key: "trade", label: "Trade", help: "Places real orders" },
 ];
 
+const SECTIONS: [string, string][] = [
+  ["swing", "Swing · 1-hour"],
+  ["intraday", "Intraday · 15-minute"],
+];
+
 function Row({ label, value, tone = "" }: { label: string; value: string; tone?: string }) {
   return (
     <div className="flex justify-between text-sm">
@@ -36,8 +41,14 @@ export default function StrategiesPage() {
       </div>
       <ErrorBanner message={error} />
 
+      {SECTIONS.map(([group, heading]) => {
+        const items = (data?.strategies ?? []).filter((s) => (s.group ?? "swing") === group);
+        if (!items.length) return null;
+        return (
+      <section key={group} className="space-y-3">
+      <h2 className="text-lg font-semibold text-slate-800">{heading}</h2>
       <div className="grid gap-6 lg:grid-cols-2">
-        {(data?.strategies ?? []).map((s) => {
+        {items.map((s) => {
           const b = s.backtest;
           return (
             <Card
@@ -113,6 +124,9 @@ export default function StrategiesPage() {
           );
         })}
       </div>
+      </section>
+        );
+      })}
 
       <ConfirmDialog
         open={change !== null}

@@ -126,7 +126,17 @@ def _instance_of(event_id: str) -> str | None:
     return parts[2] if len(parts) > 2 else None
 
 
-def _open_positions(db):
+def _groups(request) -> dict:
+    """instance -> dashboard section ("intraday" for 15-minute strategies, else "swing")."""
+    return {s.instance: s.group for s in _streams(request)}
+
+
+def _tf_group(timeframe) -> str:
+    return "intraday" if str(timeframe) in ("1", "5", "15", "30") else "swing"
+
+
+def _open_positions(db, groups=None):
+    groups = groups or {}
     snapshot = db.get_state("account_snapshot") or {}
     live = {p["identifier"]: p for p in snapshot.get("positions", [])}
     rows = []
@@ -137,12 +147,13 @@ def _open_positions(db):
             "tv_symbol": record["tv_symbol"], "side": record["side"], "volume": record["volume"],
             "entry_price": record["entry_price"], "sl": pos.get("sl", record["sl"]), "tp": pos.get("tp", record["tp"]),
             "profit": pos.get("profit"), "opened_at": record["opened_at"], "ticket": record["ticket"],
-            "risk_budget": record["risk_budget"],
+            "risk_budget": record["risk_budget"], "group": groups.get(record["instance"], "swing"),
         })
     return rows, snapshot
 
 
-def _closed_positions(db, limit=500):
+def _closed_positions(db, limit=500, groups=None):
+    groups = groups or {}
     history = db.get_state("deal_history") or {}
     rows = []
     for record in db.positions_history(limit):
@@ -155,6 +166,7 @@ def _closed_positions(db, limit=500):
             "exit_price": deal.get("close_price"), "sl": record["sl"], "tp": record["tp"],
             "opened_at": record["opened_at"], "closed_at": deal.get("closed_at") or record["closed_at"],
             "profit": deal.get("profit"), "risk_budget": record["risk_budget"],
+            "group": groups.get(record["instance"], "swing"),
         })
     return rows
 
@@ -182,6 +194,7 @@ def _signals(db, limit):
             "instance": event["instance"], "symbol": event["symbol"], "broker_symbol": event["broker_symbol"],
             "timeframe": payload.get("timeframe"), "event": event["event_type"], "side": payload.get("side"),
             "price": payload.get("reference_price"), "status": event["status"], "reason": event["error"],
+            "group": _tf_group(payload.get("timeframe")),
         })
     for row in db.audit_rows(limit, ["engine_signal_watch_only"]):
         d = row["details"]
@@ -189,7 +202,7 @@ def _signals(db, limit):
             "at": row["at"], "source": "mt5_engine", "instance": _instance_of(d.get("event_id", "")),
             "symbol": d.get("symbol"), "broker_symbol": None, "timeframe": d.get("timeframe"),
             "event": d.get("event"), "side": d.get("side"), "price": d.get("reference_price"),
-            "status": "WATCH_ONLY", "reason": "recorded_only",
+            "status": "WATCH_ONLY", "reason": "recorded_only", "group": _tf_group(d.get("timeframe")),
         })
     items.sort(key=lambda x: x["at"] or 0, reverse=True)
     return items[:limit]
@@ -201,7 +214,8 @@ def overview(request: Request):
     now = time.time()
     beat = db.get_state("worker", {})
     fresh = now - beat.get("at", 0) < settings.worker_health_seconds
-    positions, snapshot = _open_positions(db)
+    groups = _groups(request)
+    positions, snapshot = _open_positions(db, groups)
     status = db.status()
     daily = status["daily_risk"] or {}
     start = daily.get("starting_equity")
@@ -229,15 +243,16 @@ def overview(request: Request):
                    "max_total_risk_percent": settings.max_total_risk_percent},
         "positions": positions,
         "signals": _signals(db, 8),
-        "summary": _summary(_closed_positions(db)),
+        "summary": _summary(_closed_positions(db, groups=groups)),
     }
 
 
 @router.get("/positions", dependencies=[Depends(proxy_guard), Depends(session)])
 def positions(request: Request):
     db = request.app.state.db
-    open_rows, _ = _open_positions(db)
-    closed = _closed_positions(db)
+    groups = _groups(request)
+    open_rows, _ = _open_positions(db, groups)
+    closed = _closed_positions(db, groups=groups)
     return {"open": open_rows, "closed": closed, "summary": _summary(closed),
             "close_requests": db.close_requests(25)}
 
@@ -253,6 +268,14 @@ def _pattern_text(s) -> str:
     return (f"Classic Chart Patterns · {side} · swing {p.piv_len}/{p.piv_r} · stop at pattern swing + {p.sl_buf}× ATR · "
             f"target {p.tp_mult}× pattern height · exit after {p.max_hold} bars · "
             f"{'reverse' if p.rev_on_opp else 'ignore'} on opposite signal · Risk {s.risk_percent}%")
+
+
+def _meanrev_text(s) -> str:
+    m = s.meanrev
+    side = {"Short only": "SELL only", "Long only": "BUY only"}.get(m.trade_dir, "BUY + SELL")
+    return (f"RSI(2) mean reversion · {side} · BUY when RSI(2) < {m.rsi_level:g} above SMA{m.trend_len} · "
+            f"stop {m.stop_atr:g}× ATR · exit on a close back across SMA{m.exit_len} or after {m.max_hold} candles · "
+            f"Risk {s.risk_percent}%")
 
 
 def _capital(settings, db, equity):
@@ -276,8 +299,9 @@ def strategies(request: Request):
         trades = [c for c in closed if c["instance"] == s.instance]
         out.append({
             "instance": s.instance, "tv_symbol": s.tv_symbol, "broker_symbol": rule.broker_symbol if rule else None,
-            "symbol_enabled": bool(rule and rule.enabled), "timeframe": s.timeframe,
-            "settings": {"description": _pattern_text(s)} if s.strategy == "patterns" else {
+            "symbol_enabled": bool(rule and rule.enabled), "timeframe": s.timeframe, "group": s.group,
+            "settings": {"description": _pattern_text(s)} if s.strategy == "patterns" else
+                        {"description": _meanrev_text(s)} if s.strategy == "meanrev" else {
                          "sensitivity": s.sensitivity, "atr_length": s.atr_length, "stop_mode": s.stop_mode,
                          "stop_atr": s.stop_atr, "target_mode": s.target_mode, "reward_ratio": s.reward_ratio,
                          "opposite_mode": s.opposite_mode, "direction": s.direction, "htf_filter": s.htf_filter,

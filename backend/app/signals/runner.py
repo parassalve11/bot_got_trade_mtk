@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from app.control import effective_stream_mode
 from app.schemas import ENTRY_EVENTS, AlertEnvelope
+from app.signals.meanrev import meanrev_state
 from app.signals.patterns import pattern_signals
 from app.signals.ut_engine import (BarSignal, decide, htf_direction_at, htf_series, load_streams,
                                    signal_series)
@@ -96,6 +97,8 @@ class SignalEngine:
         symbol = self.broker.symbol(rule.broker_symbol)
         if stream.strategy == "patterns":
             return self.poll_patterns(stream, bars, rule, symbol, key, last["time"], close_time, now, watch_only)
+        if stream.strategy == "meanrev":
+            return self.poll_meanrev(stream, bars, rule, symbol, key, last["time"], close_time, now, watch_only)
         signal = signal_series(bars, stream, symbol.tick_size)[-1]
         position = self.journal_position(stream)
         trend = None
@@ -142,6 +145,35 @@ class SignalEngine:
             "pattern": found.pattern, "stop": found.stop, "target": found.target}
         return {"alert": alert, "rule": rule, "watch_only": watch_only, "key": key, "candle": candle, "extra": extra}
 
+    def poll_meanrev(self, stream, bars, rule, symbol, key, candle, close_time, now, watch_only):
+        """RSI(2) mean reversion: entry with an ATR stop; close on the SMA5 cross or after max_hold candles."""
+        cfg = stream.meanrev
+        state = meanrev_state(bars, cfg)
+        if state is None:
+            raise Retryable("engine_history_too_short")
+        position = self.journal_position(stream)
+        action, extra, signal = None, None, None
+        if position:
+            entry_close = int(position["trade_id"].rsplit(":", 2)[-2]) / 1000
+            held = sum(1 for b in bars if b["time"] + stream.seconds > entry_close + 1e-6)
+            if state.exit_for(position["side"]):
+                action, extra = "time_exit", {"reason": "close back across SMA%d" % cfg.exit_len}
+            elif held >= cfg.max_hold:
+                action, extra = "time_exit", {"reason": f"time exit after {cfg.max_hold} candles"}
+            if action:
+                signal = BarSignal(position["side"], state.close, 1.0, None)
+        elif state.entry:
+            action = "entry"
+            stop = state.stop_for(state.entry, cfg.stop_atr)
+            loss = max(1.0, float(math.ceil(abs(state.close - stop) / symbol.tick_size - 1e-9)))
+            signal = BarSignal(state.entry, state.close, loss, None)
+            extra = {"pattern": f"RSI(2) {state.rsi:.1f}", "stop": stop, "target": None}
+        if not action:
+            self.db.set_state(key, candle)
+            return None
+        alert = self.build_alert(stream, action, signal, position, close_time, symbol.tick_size, now)
+        return {"alert": alert, "rule": rule, "watch_only": watch_only, "key": key, "candle": candle, "extra": extra}
+
     def journal_position(self, stream):
         matches = [
             p
@@ -169,7 +201,8 @@ class SignalEngine:
         entry = event in ENTRY_EVENTS
         context = dict(
             source="mt5_engine",
-            strategy="classic_chart_patterns" if stream.strategy == "patterns" else "bytefx_ut_multi_asset",
+            strategy={"patterns": "classic_chart_patterns", "meanrev": "mean_reversion_rsi2"}.get(
+                stream.strategy, "bytefx_ut_multi_asset"),
             version="1.1.0",
             instance=stream.instance,
             event_id=trade_id + ":" + event,

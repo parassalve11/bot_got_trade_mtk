@@ -139,5 +139,20 @@
     "htf_filter": "none",
     "risk_percent": 0.5,
     "history_bars": 1000
+  },
+  {
+    "enabled": true,
+    "instance": "mr_xagusd",
+    "tv_symbol": "OANDA:XAGUSD",
+    "timeframe": "15",
+    "strategy": "meanrev",
+    "risk_percent": 1.0,
+    "history_bars": 600,
+    "meanrev": {
+      "trade_dir": "Long only",
+      "rsi_level": 5,
+      "stop_atr": 2.0,
+      "max_hold": 8
+    }
   }
 ]

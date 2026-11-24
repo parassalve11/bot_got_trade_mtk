@@ -2,33 +2,22 @@
 
 import { useMemo, useState } from "react";
 import { usePoll } from "@/lib/api";
-import { dateTime, money, plClass, price } from "@/lib/format";
+import Link from "next/link";
+import { dateTime } from "@/lib/format";
 import type { ClosedPosition, CloseRequest, OpenPosition, Summary } from "@/lib/types";
 import { OpenPositionsTable } from "@/components/positions-table";
-import { Badge, Card, Empty, ErrorBanner, SideBadge, SummaryTable, Table, Td } from "@/components/ui";
+import { ClosedTradesTable, summarize } from "@/components/trades";
+import { Badge, Card, ErrorBanner, SummaryTable, Table, Td } from "@/components/ui";
 
 type Positions = { open: OpenPosition[]; closed: ClosedPosition[]; summary: Summary; close_requests: CloseRequest[] };
-
-function summarize(rows: ClosedPosition[]): Summary {
-  const p = rows.map((r) => r.profit).filter((v): v is number => v !== null);
-  const wins = p.filter((v) => v > 0);
-  const losses = p.filter((v) => v <= 0);
-  return {
-    trades: p.length,
-    wins: wins.length,
-    losses: losses.length,
-    win_rate: p.length ? wins.length / p.length : null,
-    gross_profit: wins.reduce((a, b) => a + b, 0),
-    gross_loss: losses.reduce((a, b) => a + b, 0),
-    net: p.reduce((a, b) => a + b, 0),
-  };
-}
 
 export default function PositionsPage() {
   const { data, error, refresh } = usePoll<Positions>("positions", 15_000);
   const [tab, setTab] = useState<"open" | "closed">("open");
   const [strategy, setStrategy] = useState("all");
-  const closed = useMemo(() => data?.closed ?? [], [data]);
+  // Swing (1-hour) trades only; 15-minute trades have their own Intraday page.
+  const closed = useMemo(() => (data?.closed ?? []).filter((c) => c.group !== "intraday"), [data]);
+  const open = useMemo(() => (data?.open ?? []).filter((p) => p.group !== "intraday"), [data]);
   const strategies = useMemo(() => Array.from(new Set(closed.map((c) => c.instance))).sort(), [closed]);
   const shown = strategy === "all" ? closed : closed.filter((c) => c.instance === strategy);
 
@@ -36,7 +25,10 @@ export default function PositionsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Positions</h1>
-        <p className="text-sm text-slate-500">Bot trades only (magic number), with results from MT5 deal history.</p>
+        <p className="text-sm text-slate-500">
+          Swing trades (1-hour strategies), with results from MT5 deal history. 15-minute trades are on the{" "}
+          <Link href="/intraday" className="font-medium text-indigo-600 hover:underline">Intraday page</Link>.
+        </p>
       </div>
       <ErrorBanner message={error} />
 
@@ -53,14 +45,14 @@ export default function PositionsPage() {
         {(["open", "closed"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`rounded-md px-4 py-1.5 ${tab === t ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}>
-            {t === "open" ? `Open (${data?.open.length ?? 0})` : `Closed (${closed.length})`}
+            {t === "open" ? `Open (${open.length})` : `Closed (${closed.length})`}
           </button>
         ))}
       </div>
 
       {tab === "open" ? (
         <Card title="Open positions">
-          <OpenPositionsTable positions={data?.open ?? []} onChanged={refresh} />
+          <OpenPositionsTable positions={open} onChanged={refresh} />
         </Card>
       ) : (
         <Card
@@ -73,27 +65,7 @@ export default function PositionsPage() {
             </select>
           }
         >
-          {shown.length ? (
-            <Table head={["#", "Opened", "Closed", "Symbol", "Side", "Lots", "Entry", "Exit", "Result", "Profit / Loss", "Strategy"]}>
-              {shown.map((t, i) => (
-                <tr key={`${t.instance}:${t.trade_id}`}>
-                  <Td className="num text-slate-500">{shown.length - i}</Td>
-                  <Td className="text-slate-600">{dateTime(t.opened_at)}</Td>
-                  <Td className="text-slate-600">{dateTime(t.closed_at)}</Td>
-                  <Td className="font-medium">{t.symbol}</Td>
-                  <Td><SideBadge side={t.side} /></Td>
-                  <Td className="num">{t.volume.toFixed(2)}</Td>
-                  <Td className="num">{price(t.entry_price)}</Td>
-                  <Td className="num">{price(t.exit_price)}</Td>
-                  <Td>{t.profit === null ? <Badge>Pending</Badge> : t.profit > 0 ? <Badge tone="green">Win</Badge> : <Badge tone="red">Loss</Badge>}</Td>
-                  <Td className={`num font-semibold ${plClass(t.profit)}`}>{money(t.profit, "USD", true)}</Td>
-                  <Td className="text-slate-600">{t.instance}</Td>
-                </tr>
-              ))}
-            </Table>
-          ) : (
-            <Empty>No closed trades yet.</Empty>
-          )}
+          <ClosedTradesTable rows={shown} />
         </Card>
       )}
 

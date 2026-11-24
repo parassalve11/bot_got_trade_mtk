@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from app.signals.meanrev import MeanRevSettings
 from app.signals.patterns import PatternSettings
 
 NA = float("nan")
@@ -50,12 +51,19 @@ class StreamConfig(BaseModel):
     watch_only: bool = False
     # "ut" = UT Bot (fields above); "patterns" = Classic Chart Patterns (app/signals/patterns.py,
     # settings in `patterns`; stop/target come from the pattern, the UT fields are ignored).
-    strategy: Literal["ut", "patterns"] = "ut"
+    # "meanrev" = 15-minute RSI(2) mean reversion (app/signals/meanrev.py, settings in `meanrev`).
+    strategy: Literal["ut", "patterns", "meanrev"] = "ut"
     patterns: PatternSettings = Field(default_factory=PatternSettings)
+    meanrev: MeanRevSettings = Field(default_factory=MeanRevSettings)
 
     @property
     def seconds(self) -> int:
         return TIMEFRAME_SECONDS[self.timeframe]
+
+    @property
+    def group(self) -> str:
+        """Dashboard section: "intraday" (below 1 hour, e.g. 15-minute scalps) or "swing"."""
+        return "intraday" if self.seconds < 3600 else "swing"
 
 
 def load_streams(path: Path) -> list[StreamConfig]:

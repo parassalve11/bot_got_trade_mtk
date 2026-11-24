@@ -1,5 +1,8 @@
 export type Side = "LONG" | "SHORT";
 
+/** Dashboard section: "intraday" = 15-minute strategies, "swing" = 1-hour and above. */
+export type Group = "intraday" | "swing";
+
 export type Signal = {
   at: number;
   source: "mt5_engine" | "tradingview";
@@ -12,6 +15,7 @@ export type Signal = {
   price: number | null;
   status: string;
   reason: string | null;
+  group?: Group;
 };
 
 export type OpenPosition = {
@@ -28,6 +32,7 @@ export type OpenPosition = {
   opened_at: number | null;
   ticket: number | null;
   risk_budget: number;
+  group?: Group;
 };
 
 export type ClosedPosition = {
@@ -44,6 +49,7 @@ export type ClosedPosition = {
   closed_at: number | null;
   profit: number | null;
   risk_budget: number;
+  group?: Group;
 };
 
 export type Summary = {
@@ -122,6 +128,7 @@ export type Strategy = {
   broker_symbol: string | null;
   symbol_enabled: boolean;
   timeframe: string;
+  group?: Group;
   settings: {
     description?: string;
     sensitivity: number;

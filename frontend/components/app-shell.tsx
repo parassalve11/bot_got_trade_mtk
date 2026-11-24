@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { Activity, BarChart3, Gauge, LogOut, Radio, ScrollText, Settings2, Zap } from "lucide-react";
+import { Activity, BarChart3, Gauge, LogOut, Radio, ScrollText, Settings2, Timer, Zap } from "lucide-react";
 import { usePoll } from "@/lib/api";
 import type { Overview } from "@/lib/types";
 import { Badge, Dot } from "@/components/ui";
@@ -12,6 +12,7 @@ import { BotSwitch } from "@/components/bot-switch";
 const NAV = [
   { href: "/", label: "Overview", icon: Gauge },
   { href: "/positions", label: "Positions", icon: BarChart3 },
+  { href: "/intraday", label: "Intraday 15m", icon: Timer },
   { href: "/signals", label: "Signals", icon: Radio },
   { href: "/strategies", label: "Strategies", icon: Activity },
   { href: "/controls", label: "Controls", icon: Settings2 },
