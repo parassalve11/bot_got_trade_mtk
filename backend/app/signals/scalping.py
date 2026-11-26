@@ -57,6 +57,12 @@ class ScalpSettings(BaseModel):
     flag_max: int = 10
     swp_max: float = 1.0
     fixed: bool = True
+    # v3 "high win rate" options (all off = v2 behaviour)
+    single_tp: bool = False      # close the whole trade at TP1 (no TP2 / breakeven part)
+    sl_mult: float = Field(default=1.0, ge=0.5, le=4.0)   # stop distance x this (wider stop)
+    trend_len: int = Field(default=0, ge=0, le=1000)      # >0: BUY only above a rising EMA(len), SELL below a falling one
+    start_min: int = Field(default=0, ge=0)               # trade only from N minutes after the session open
+    end_min: int = Field(default=0, ge=0)                 # ... until N minutes after the open (0 = all day)
 
 
 @dataclass
@@ -173,6 +179,7 @@ def scalp_trades(bars: list[dict], tf_minutes: float, cfg: ScalpSettings | None 
     ATR = _rma(TR, 14)
     ATRA = _sma(ATR, 100)
     E9, E20, E50 = _ema(C, 9), _ema(C, 20), _ema(C, 50)
+    ETR = _ema(C, cfg.trend_len) if cfg.trend_len else None
     up = [NA] + [H[i] - H[i - 1] for i in range(1, n)]
     dn = [NA] + [L[i - 1] - L[i] for i in range(1, n)]
     pdm = [NA if _na(u) else (u if u > d and u > 0 else 0.0) for u, d in zip(up, dn)]
@@ -518,6 +525,9 @@ def scalp_trades(bars: list[dict], tf_minutes: float, cfg: ScalpSettings | None 
             if risk < cfg.min_risk_atr * atrV:
                 risk = cfg.min_risk_atr * atrV
                 sl = c - cDir * risk
+            if cfg.sl_mult != 1.0:
+                risk *= cfg.sl_mult
+                sl = c - cDir * risk
             if cCont and cfg.use_trend and not (trUpQ if cDir == 1 else trDnQ):
                 why = "against trend"
             elif cCont and not chopOk:
@@ -528,8 +538,14 @@ def scalp_trades(bars: list[dict], tf_minutes: float, cfg: ScalpSettings | None 
                 why = "low volume"
             elif not _na(cTrig) and cBrk and cDir * (c - cTrig) > eLate * atrV:
                 why = "late breakout"
-            elif risk > eMaxRisk * atrV or _na(risk):
+            elif risk > eMaxRisk * cfg.sl_mult * atrV or _na(risk):
                 why = "SL too wide"
+            elif ETR is not None and not (c > ETR[bi] and ETR[bi] > g(ETR, bi - 10) if cDir == 1
+                                          else c < ETR[bi] and ETR[bi] < g(ETR, bi - 10)):
+                why = "against higher trend"
+            elif (cfg.start_min or cfg.end_min) and not (
+                    T[bi] - dayOpenT >= cfg.start_min * 60 and (not cfg.end_min or T[bi] - dayOpenT < cfg.end_min * 60)):
+                why = "outside time window"
             candOk = (why == "" and tradesToday < eMaxTr and notDead and bi >= pauseUntil
                       and (cfg.max_loss_r == 0 or rToday > -cfg.max_loss_r))
 
@@ -546,11 +562,14 @@ def scalp_trades(bars: list[dict], tf_minutes: float, cfg: ScalpSettings | None 
                 if cfg.fixed and (o < trSL if d == 1 else o > trSL):
                     exP = o  # gapped through the stop: filled at the open
             else:
-                if not trT1 and (h >= trade.tp1 if d == 1 else lo <= trade.tp1):
+                tp1Now = not trT1 and (h >= trade.tp1 if d == 1 else lo <= trade.tp1)
+                if tp1Now and not cfg.single_tp:
                     trT1 = True
                     if cfg.be_after_tp1:
                         trSL = trade.entry
-                if t2Hit:
+                if tp1Now and cfg.single_tp:
+                    ex, exP = "TP hit", trade.tp1
+                elif t2Hit:
                     ex, exP = "TP2 hit", trade.tp2
                 elif not trT1 and bi - trade.bar >= tsBars:
                     ex, exP = "Time exit", c
